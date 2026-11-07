@@ -1,0 +1,5 @@
+start: '2004-01-01'
+end: '2026-11-03'
+holdout_start: '2024-01-01'
+raw_dir: 'DATA_ROOT/mass_data'
+derived_dir: ev_data
