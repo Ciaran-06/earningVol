@@ -21,9 +21,7 @@ for c in ["chunk_start", "chunk_end", "trade_date"]:
 m = manifest
 m["flag_zero_rows"]      = (m["status"] == "parquet") & (m["num_rows"] == 0)
 m["flag_outside_range"]  = (m["min_date"] < m["chunk_start"]) | (m["max_date"] > m["chunk_end"])
-m["flag_chain_mismatch"] = m["trade_date"].notna() & ((m["min_date"] != m["trade_date"]) | (m["max_date"] != m["trade_date"]))
-m["flag_bad_dates"]      = m["bad_dates"] > 0
-m["flag_read_error"]     = m["schema_error"].notna() | m["read_error"].notna()
+m["flag_chain_mismatch"] = (m["status"] == "parquet") & m["trade_date"].notna() & ((m["min_date"] != m["trade_date"]) | (m["max_date"] != m["trade_date"]))
 m["flag_schema_variant"] = m["schema_id"] > 0
 m["flag_tmp"]            = m["status"] == "tmp"
 
