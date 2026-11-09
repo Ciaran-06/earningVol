@@ -1,12 +1,22 @@
 import re
 import pandas as pd
 import pyarrow.parquet as pq
+import duckdb as db
 
 from collections import Counter
 
 from earning_vol.config import RAW
 
 FOLDER_PREFIX = "equities_eod_"
+DATE_COL = {
+    "history-earnings-calendar": "earning_date",
+    "hv": "date",
+    "ivs": "date",
+    "ivs-by-delta": "date",
+    "ivx": "date",
+    "stock-prices": "date",
+    "stock-opts-by-param": "c_date",
+}
 EXTENSIONS = (".parquet", ".csv.gz", ".empty", ".renamed", ".notfound", ".tmp")
 CHUNK = re.compile(r"(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})")
 CHAIN = re.compile(r"(\d{4}-\d{2}-\d{2})_([CP])")
@@ -104,3 +114,20 @@ def schemas(inv: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     files = files.drop(columns=["fingerprint", "first_date", "last_date"])
     return files, summary
+
+def contents(inv: pd.DataFrame) -> pd.DataFrame:
+    pq_files = inv[inv["status"] == "parquet"]
+    results = []
+    for path, dataset in zip(pq_files["path"], pq_files["dataset"]):
+        #print(f'Path: {path}, Dataset {dataset}')
+        date_col = DATE_COL[dataset]
+
+        df = pd.read_parquet(path,columns=[date_col])
+        dates = pd.to_datetime(df[date_col],errors="coerce")
+        first_date = dates.min()
+        last_date = dates.max()
+        bad_dates = dates.isna().sum()
+        results.append({"path": path, "min_date": first_date,
+                       "max_date": last_date, "bad_dates": int(bad_dates)})
+
+    return pd.DataFrame(results)
