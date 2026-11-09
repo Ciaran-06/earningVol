@@ -119,15 +119,15 @@ def contents(inv: pd.DataFrame) -> pd.DataFrame:
     pq_files = inv[inv["status"] == "parquet"]
     results = []
     for path, dataset in zip(pq_files["path"], pq_files["dataset"]):
-        #print(f'Path: {path}, Dataset {dataset}')
-        date_col = DATE_COL[dataset]
-
-        df = pd.read_parquet(path,columns=[date_col])
-        dates = pd.to_datetime(df[date_col],errors="coerce")
-        first_date = dates.min()
-        last_date = dates.max()
-        bad_dates = dates.isna().sum()
-        results.append({"path": path, "min_date": first_date,
-                       "max_date": last_date, "bad_dates": int(bad_dates)})
+        rec = {"path": path, "min_date": None, "max_date": None, "bad_dates": None, "error": None}
+        try:
+            data = pd.read_parquet(path, columns=[DATE_COL[dataset]])
+            dates = pd.to_datetime(data[DATE_COL[dataset]], errors="coerce")
+            rec["min_date"] = dates.min()
+            rec["max_date"] = dates.max()
+            rec["bad_dates"] = int(dates.isna().sum())
+        except Exception as e:
+            rec["error"] = f"{type(e).__name__}: {e}"
+        results.append(rec)
 
     return pd.DataFrame(results)
