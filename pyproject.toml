@@ -10,6 +10,8 @@ dependencies = [
     "exchange-calendars",
     "python-dotenv",
     "pyyaml",
+    "requests>=2.34.2",
+    "ivolatility>=1.9.9",
 ]
 
 [build-system]

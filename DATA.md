@@ -1,6 +1,6 @@
 # DATA.md — data dictionary and known gaps
 
-Last updated: 2026-11-09 (from `scripts/01_manifest.py` output; regenerate the manifest after every download).
+Last updated: 2026-11-09. Built from `scripts/01_manifest.py`; rerun the manifest after every download and update this file.
 
 ## Sources
 
@@ -11,12 +11,14 @@ Last updated: 2026-11-09 (from `scripts/01_manifest.py` output; regenerate the m
 | hanshof/sp500_constituents (GitHub) | daily S&P 500 membership history | `sp500_former_members.csv` (409 members that left since 2004) |
 | Wikipedia | current S&P 500 members | `sp500_universe.csv` |
 
-Downloaded with `download.py` (free trial runs 2026-11-04 and 2026-11-05; paid plan from 2026-11-11).
+Downloaded with `download.py` (free trial runs 2026-11-04 and 2026-11-05). Next download on the paid plan: 2026-11-11, 17,053 jobs planned (earnings chains, SPX 2024–26, 141 renamed-ticker re-requests, earnings chains 2010–14, ivs-by-delta).
 
 ## Layout and file naming
 
 ```
-ivol_data/equities_eod_<dataset>/<ticker>/<file>
+DATA_ROOT/
+├── ivol_data/equities_eod_<dataset>/<ticker>/<file>   raw downloads, never edited
+└── ev_data/manifest/{files,schemas}.parquet           built by scripts/01_manifest.py
 ```
 
 - Date-range chunks: `<from>_<to>.<status>` e.g. `2004-01-01_2008-12-31.parquet`
@@ -25,16 +27,25 @@ ivol_data/equities_eod_<dataset>/<ticker>/<file>
 | Status | Meaning |
 |---|---|
 | `.parquet` | data |
-| `.empty` | API returned 0 rows (genuinely no data, *or* a renamed ticker — see gaps) |
+| `.empty` | API returned 0 rows (genuinely no data, *or* a renamed ticker; see gaps) |
 | `.renamed` / `.notfound` | API said the symbol was renamed / not found (written by the new `download.py` only) |
-| `.csv.gz` | fallback if parquet write failed (none so far) |
+| `.csv.gz` | fallback if a parquet write failed (none so far) |
 | `.tmp` | interrupted write (none so far) |
 
-## Totals (manifest, 2026-11-09)
+## Manifest (2026-11-09)
 
-- 21,842 files: 20,269 parquet, 1,573 empty
-- 49.4M rows, 0 unreadable files
-- All file names parsed; no unknown file types
+| Dataset | Tickers | Parquet | Empty | Rows | First | Last |
+|---|---|---|---|---|---|---|
+| history-earnings-calendar | 906 | 659 | 247 | 47,641 | 2004-01-06 | 2026-11-03 |
+| hv | 536 | 2,459 | 221 | 2,712,843 | 2004-01-02 | 2026-11-03 |
+| ivs | 3 | 68 | 1 | 5,739,136 | 2004-01-02 | 2026-11-03 |
+| ivs-by-delta | 7 | 84 | 1 | 6,311,182 | 2004-01-02 | 2026-11-03 |
+| ivx | 939 | 4,136 | 484 | 3,474,028 | 2004-01-02 | 2026-11-03 |
+| stock-opts-by-param | 2 | 9,612 | 204 | 27,573,626 | 2004-01-02 | 2025-12-31 |
+| stock-prices | 939 | 3,251 | 415 | 3,563,937 | 2004-01-02 | 2026-11-03 |
+| **Total** | | **20,269** | **1,573** | **49,422,393** | | |
+
+Flag results: 0 zero-row files, 0 unreadable files, 0 bad dates, 0 leftover `.tmp` files, 0 files with dates outside their name's range, 0 chain files containing the wrong day. Schema variants: 95 (calendars), 19 (hv), 2 (chains), all harmless (see schema notes).
 
 ## Datasets
 
@@ -44,8 +55,9 @@ All date columns are stored as **text** and must be cast to dates.
 - 939 tickers (current S&P members, former members within ±1 year of their membership window, ETFs); 5-year chunks, 2004-01-01 → 2026-11-03
 - Date column: `date`
 - Columns: `open`, `high`, `low`, `close`, `unadjusted_close`, `bid`, `ask`, `bid_size`, `ask_size`, `volume`, `exchange`, `symbol`, `record_no`
-- `close` appears split-adjusted (`unadjusted_close` is separate). **TODO:** check `open`/`high`/`low` are adjusted the same way, on the NVDA split dates 2021-07-20 and 2024-06-10. Yang–Zhang RV breaks on split days if they are not.
-- Option strikes are unadjusted, so compute moneyness against `unadjusted_close`.
+- **Split-adjusted:** `open`/`high`/`low`/`close` are adjusted for all later splits; `unadjusted_close` is the actual traded price. Verified on NVDA 2021-07-13: `unadjusted_close / close = 40` (= 4 × 10, both splits) and `low ≤ close ≤ high`.
+  - **TODO:** confirm the overnight ratio `open_t / close_{t-1} ≈ 1` across the split dates 2021-07-20 and 2024-06-10.
+- Realised vol uses the adjusted prices. Option moneyness uses `unadjusted_close` (strikes are unadjusted).
 
 ### ivx: `/equities/eod/ivx`
 - 939 tickers; mostly 5-year chunks, some tickers in yearly chunks (separate download runs, e.g. META)
@@ -76,13 +88,16 @@ All date columns are stored as **text** and must be cast to dates.
 - One file per trade date per side (calls and puts are separate requests). Request filter: DTE 0–400, moneyness ±50%.
 - Date column: `c_date`
 - Columns: `Bid`, `Ask`, `price`, `price_open`, `price_high`, `price_low`, `iv`, `preiv`, `delta`, `gamma`, `theta`, `vega`, `rho`, `dte`, `expiration_date`, `price_strike`, `calc_OTM`, `underlying_price`, `openinterest`, `volume`, `option_id`, `option_symbol`, `stocks_id`, `is_settlement`, `call_put`
-- **TODO:** confirm what `preiv` is.
+- **`preiv` vs `iv`** (confirmed with IVolatility):
+  - `preiv` = IV solved from that row's own option price; `-1` if it could not be calculated (no usable quote).
+  - `iv` = `preiv` where available, otherwise **interpolated** across strikes and expiries.
+  - Rules: use `preiv` for trades and implied moves (an interpolated IV is not a tradeable price); convert `-1` to null in cleaning; exclude rows with `preiv = -1` from backtest fills.
 
 ### history-earnings-calendar: `/equities/eod/history-earnings-calendar`
 - 906 tickers; one chunk per ticker, 2004-01-01 → 2026-11-03
 - Date column: `earning_date`
 - Columns: `earning_date`, `time_of_day_code`, `estimate`, `reported_earning`, `market_cap`, `stock_id`, `symbol`
-- May include scheduled future report dates beyond the chunk end (expected; not an error).
+- No dates beyond 2026-11-03 (the requests ended there), so no scheduled future reports.
 - **TODO:** check whether `market_cap` is point-in-time (as of each report) or today's value repeated. If point-in-time, use it to pick the universe as it stood at each date.
 
 ## Schema notes
@@ -91,7 +106,7 @@ All date columns are stored as **text** and must be cast to dates.
   - columns that are entirely null in a file (stored with type `null`)
   - `market_cap` stored as `int64` instead of `double` in 73 calendar files (all whole numbers)
 - Cleaning rule: cast every column to its schema-0 type.
-- Company ID has two names: `stock_id` (calendars) and `stocks_id` (chains). Rename both to `stock_id`; use it, not the ticker, as the company key (it survives renames).
+- Company ID has two names: `stock_id` (calendars) and `stocks_id` (chains). Rename both to `stock_id`; use it, not the ticker, as the company key (it survives renames). `stock-prices` and `ivx` have no ID column, so they get one via a ticker-to-company map.
 - Column names are inconsistent (`Ask` vs `ask`, spaces, `%`). Convert all to `snake_case` in cleaning.
 
 ## Lookahead warnings
@@ -102,7 +117,7 @@ All date columns are stored as **text** and must be cast to dates.
 
 ## Known gaps (audit 2026-11-07)
 
-**Not yet downloaded (trial limit hit; planned for the paid plan):**
+**Not yet downloaded (trial limit hit; planned for 2026-11-11):**
 - Earnings-window option chains for the other 47 large caps
 - SPX chains 2024 → 2026
 - `ivs-by-delta` for ~530 tickers
@@ -113,7 +128,7 @@ All date columns are stored as **text** and must be cast to dates.
 - 133 are already covered by the new symbol's files (just map them); 141 need re-requesting under the new symbol
 - Examples: CTL→LUMN, FB→META, UTX→RTX, PKI→RVTY, SIVB→SIVBQ, FRC→FRCB
 
-**Symbols not found / wrong format:** BRK.B, BRK-B, BF.B (class shares; correct format TBD on 2026-11-11), DALRQ, WNDXQ
+**Symbols not found / wrong format:** BRK.B, BRK-B, BF.B (class shares; correct format to be tested 2026-11-11), DALRQ, WNDXQ
 
 **Duplicates to merge:** FLT/CPAY, JEC/J, SYMC & NLOK → GEN, CBS & VIAC → SKYD
 
