@@ -58,3 +58,27 @@ def save_clean(df,name):
     data["year"] = data["date"].dt.year
     output_folder.parent.mkdir(parents=True, exist_ok=True)
     data.to_parquet(output_folder,partition_cols=["year"], index=False)
+
+def clean_calendar(raw) -> pd.DataFrame:
+    # WARNING: reported_earning is the actual EPS released AT the announcement.
+    # It is only known after the event, so never use it (or any surprise built from it)
+    # as a feature to predict that same event's move. `estimate` is known beforehand and is fine.
+    df = raw.copy()
+    df = df[~df["ticker"].isin(DROP_TICKERS)]
+    df["date"] = pd.to_datetime(df["earning_date"])
+    df["time_of_day_code"] = df["time_of_day_code"].str.upper().str.strip()
+    df["company"] = df["ticker"]
+    df["market_cap"] = df["market_cap"].astype(float)
+    df = df.drop(columns=["earning_date","filename"])
+    print(df.duplicated(subset=["company","date"]).sum())
+    df = df.drop_duplicates(subset=["company","date"])
+    df["time_of_day_code"] = df["time_of_day_code"].where(df["time_of_day_code"].isin(["BMO", "AMC"]), "UNKNOWN")
+
+    first_columns = ["ticker", "company","date"]
+    last_columns = [c for c in df.columns if c not in first_columns] 
+    df = df[first_columns + last_columns]
+
+    df = df.sort_values(["company","date"])
+    df = df.reset_index(drop=True)
+    return df
+
