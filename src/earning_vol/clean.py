@@ -82,3 +82,39 @@ def clean_calendar(raw) -> pd.DataFrame:
     df = df.reset_index(drop=True)
     return df
 
+def ivx_rename_helper(name):
+    if "IV" in name:
+        n = name.lower()
+        n = n.split()
+        tenor = n[0]
+        side  = n[2]
+        return "iv_" + tenor + "_" + side
+    else:
+        return name
+
+def clean_ivx(raw) -> pd.DataFrame:
+    df = raw.copy()
+    df = df[~df["ticker"].isin(DROP_TICKERS)]
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.rename(columns=ivx_rename_helper)
+
+    df["symbol_at_date"] = df["symbol"]
+    df["company"] = df["ticker"]
+    df = df.drop(columns=["symbol","price","record_no","filename"])
+    df = df.drop_duplicates(subset=["company","date"])
+    iv_columns = []
+    for c in df.columns:
+        if c.startswith("iv_"):
+             iv_columns.append(c)
+    
+    capped_cells = ((df[iv_columns] >= 6).sum()).sum()
+    df[iv_columns] = df[iv_columns].where(df[iv_columns] < 6 , np.nan)
+    print(capped_cells)
+
+    first_columns = ["ticker", "company","date"]
+    last_columns = [c for c in df.columns if c not in first_columns] 
+    df = df[first_columns + last_columns]
+
+    df = df.sort_values(["company","date"])
+    df = df.reset_index(drop=True)
+    return df
