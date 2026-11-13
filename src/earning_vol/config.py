@@ -6,6 +6,16 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 
+RAW_DATASETS = {
+    "stock_prices":     "stock-prices",
+    "chains":           "stock-opts-by-param",
+    "ivx":              "ivx",
+    "ivs_by_delta":     "ivs-by-delta",
+    "ivs":              "ivs",
+    "hv":               "hv",
+    "earning_calendar": "history-earnings-calendar",
+}
+
 REPO_ROOT = Path(__file__).resolve().parents[2]   # config.py -> earning_vol -> src -> repo root
 load_dotenv(REPO_ROOT / ".env")
 

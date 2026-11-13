@@ -1,6 +1,7 @@
 from earning_vol.events import trading_calendar,add_event_days,add_prices,add_moves,add_labels
 from earning_vol.clean import available_tickers
 from earning_vol.io import load_clean, save_derived
+from earning_vol.config import RAW_DATASETS
 
 cleaned_prices = load_clean("stock_prices",columns=["ticker","date","company","close","open","corporate_action"])
 
@@ -19,7 +20,7 @@ print("R_EVENT:           ",events["r_event"].mean())
 print("ABS_MOVE:          ",events["abs_move"].median())
 print("GAP:               ",events["gap"].mean())
 
-ticker_list = available_tickers("stock-opts-by-param")
+ticker_list = available_tickers(RAW_DATASETS["chains"])
 events = add_labels(events,ticker_list)
 post_proccesing_len = len(events)
 

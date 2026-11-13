@@ -17,6 +17,7 @@ DATE_COL = {
     "stock-prices": "date",
     "stock-opts-by-param": "c_date",
 }
+
 EXTENSIONS = (".parquet", ".csv.gz", ".empty", ".renamed", ".notfound", ".tmp")
 CHUNK = re.compile(r"(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})")
 CHAIN = re.compile(r"(\d{4}-\d{2}-\d{2})_([CP])")
