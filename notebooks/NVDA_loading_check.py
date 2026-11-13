@@ -1,6 +1,7 @@
 import pandas as pd
 
-from earning_vol.clean import load_raw, clean_chains, save_clean
+from earning_vol.clean import load_raw, clean_chains
+from earning_vol.io import save_clean
 from earning_vol.config import DERIVED
 
 CHAINS = DERIVED / "clean" / "chains"

@@ -1,4 +1,5 @@
-from earning_vol.clean import load_raw, clean_stock_prices, save_clean, clean_calendar, clean_ivx, clean_chains
+from earning_vol.clean import load_raw, clean_stock_prices, clean_calendar, clean_ivx, clean_chains
+from earning_vol.io import save_clean
 from earning_vol.clean import available_tickers
 raw_stock_prices = load_raw("stock-prices")
 stock_prices = clean_stock_prices(raw_stock_prices)
