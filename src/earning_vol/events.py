@@ -71,9 +71,134 @@ def add_moves(events) -> pd.DataFrame:
     df["gap"] = np.log(events["open_reaction"] / events["close_entry"])
     return df
 
-def add_labels(events, chain_tickers):
+def add_labels(events, chain_tickers) -> pd.DataFrame:
     events = events.copy()
     events["has_chains"] = events["company"].isin(chain_tickers)
     events["is_holdout"] = events["report_date"] >= HOLDOUT_START
 
     return events
+
+def price_exit(exit_day: pd.DataFrame | None, expiry: pd.Timestamp, strike: float) -> dict | str:
+    """Prices, on the reaction day, of the same two contracts picked on the entry day.
+
+    No quote filter here: whatever price exists (even a zero bid) is the price you would face.
+    Returns a dict, or a short string saying why the exit can't be priced.
+    """
+    if exit_day is None:
+        return "no chain on reaction day"
+
+    legs = exit_day[(exit_day["expiration_date"] == expiry) & (exit_day["strike"] == strike)]
+    if set(legs["cp"]) != {"C", "P"}:
+        return "no exit quote"
+
+    legs = legs.set_index("cp")
+    call, put = legs.loc["C"], legs.loc["P"]
+    return {
+        "exit_bid": float(call["bid"] + put["bid"]),
+        "exit_mid": float(call["mid"] + put["mid"]),
+        "exit_ask": float(call["ask"] + put["ask"]),
+        "exit_spot": float(exit_day["underlying_price"].iloc[0]),
+    }
+
+
+def add_straddles(events: pd.DataFrame, chains: pd.DataFrame) -> pd.DataFrame:
+    """Add the ATM straddle opened at the entry-day close and closed at the reaction-day close.
+
+    Every event of a company that has chains gets a `straddle_status`: "ok", or the reason its
+    straddle is missing or incomplete. Events of companies without chains get NaN.
+    """
+    results = []
+
+    for company, comp_chain in chains.groupby("company", observed=True):
+        by_date = {date: day for date, day in comp_chain.groupby("date")}          # {date: that day's chain}
+        comp_events = events[events["company"] == company]
+
+        for event in comp_events.itertuples():
+            row = {"company": company, "report_date": event.report_date}
+
+            # entry: the straddle on the entry day
+            day = by_date.get(event.entry_date)
+            if day is None:
+                row["straddle_status"] = "no chain on entry day"
+                results.append(row)
+                continue
+
+            entry = pick_straddle(day, event.reaction_date)
+            if isinstance(entry, str):
+                row["straddle_status"] = entry
+                results.append(row)
+                continue
+            row.update(entry)
+
+            # exit: the same contracts on the reaction day
+            exit_ = price_exit(by_date.get(event.reaction_date), entry["expiry"], entry["strike"])
+            if isinstance(exit_, str):
+                row["straddle_status"] = exit_          # keep the entry data anyway
+            else:
+                row.update(exit_)
+                row["straddle_status"] = "ok"
+            results.append(row)
+
+    out = pd.DataFrame(results)
+    print("straddle status:")
+    print(out["straddle_status"].value_counts().to_string())
+
+    n_before = len(events)
+    events = events.merge(out, on=["company", "report_date"], how="left")
+    if len(events) != n_before:
+        raise ValueError(f"merge changed the row count: {n_before} -> {len(events)}")
+    return events
+
+def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict | str:
+    """ATM straddle for one event, priced on its entry day.
+
+    Expiry: the earliest one on or after the reaction day (the option must be alive through the move).
+    Strike: the one closest to spot among strikes where BOTH the call and the put have a usable
+    quote (bid > 0 and preiv present). Ties go to the first strike found.
+
+    Returns a dict of results, or a short string saying why no straddle could be picked.
+    """
+    # spot: exactly one value per day
+    if day_chain["underlying_price"].nunique() != 1:
+        return "multiple spots"
+    spot = float(day_chain["underlying_price"].iloc[0])
+
+    # expiry: earliest on or after the reaction day
+    later = day_chain.loc[day_chain["expiration_date"] >= reaction_date, "expiration_date"]
+    if later.empty:
+        return "no expiry"
+    expiry = later.min()
+    chain_exp = day_chain[day_chain["expiration_date"] == expiry]
+
+    # usable quotes, keeping only strikes where both legs are usable
+    valid = chain_exp[(chain_exp["bid"] > 0) & chain_exp["preiv"].notna()]
+    call_strikes = set(valid.loc[valid["cp"] == "C", "strike"])
+    put_strikes = set(valid.loc[valid["cp"] == "P", "strike"])
+    valid = valid[valid["strike"].isin(call_strikes & put_strikes)]
+    if valid.empty:
+        return "no valid strike"
+
+    # ATM strike = closest to spot
+    distance = (valid["strike"] - spot).abs()
+    atm_strike = valid.loc[distance.idxmin(), "strike"]
+
+    # the two legs (one row each: the contract key guarantees no duplicates)
+    legs = valid[valid["strike"] == atm_strike].set_index("cp")
+    call, put = legs.loc["C"], legs.loc["P"]
+
+    straddle_bid = call["bid"] + put["bid"]
+    straddle_mid = call["mid"] + put["mid"]
+    straddle_ask = call["ask"] + put["ask"]
+
+    return {
+        "expiry": expiry,
+        "strike": float(atm_strike),
+        "spot": spot,
+        "strike_gap": float((atm_strike - spot) / spot),
+        "call_preiv": float(call["preiv"]),
+        "put_preiv": float(put["preiv"]),
+        "straddle_bid": float(straddle_bid),
+        "straddle_mid": float(straddle_mid),
+        "straddle_ask": float(straddle_ask),
+        "implied_move": float(straddle_mid / spot),
+    }
