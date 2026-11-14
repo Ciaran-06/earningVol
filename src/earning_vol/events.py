@@ -69,6 +69,7 @@ def add_moves(events) -> pd.DataFrame:
     df["r_event"] = np.log(events["close_reaction"]/ events["close_entry"])
     df["abs_move"] = np.abs(df["r_event"])
     df["gap"] = np.log(events["open_reaction"] / events["close_entry"])
+    df["abs_move_simple"]= np.abs((df["close_reaction"]/ df["close_entry"]) - 1 )
     return df
 
 def add_labels(events, chain_tickers) -> pd.DataFrame:
@@ -202,3 +203,13 @@ def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict 
         "straddle_ask": float(straddle_ask),
         "implied_move": float(straddle_mid / spot),
     }
+
+def add_hist_move(events, n=8):
+    events = events.sort_values(["company","report_date"])
+    events.groupby("company")
+    #events.shift(1), (np.rolling(n,min_periods = n)).mean()
+    events["hist_move_8"] = events.groupby("company")["abs_move_simple"].transform(lambda s: s.shift(1).rolling(n,min_periods=n).mean())
+    missing_value = (events["hist_move_8"].isna()).sum()
+    print("Missing Values:      ",missing_value)
+
+    return events
