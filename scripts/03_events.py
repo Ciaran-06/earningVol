@@ -1,7 +1,7 @@
 import pandas as pd
 
 from earning_vol.events import (trading_calendar, add_event_days, add_prices, add_moves,
-                                add_hist_move, add_labels, add_straddles)
+                                add_hist_move, add_labels, add_straddles, add_target)
 from earning_vol.clean import available_tickers
 from earning_vol.io import load_clean, save_derived
 from earning_vol.config import RAW_DATASETS
@@ -50,6 +50,9 @@ print("chain rows on event days:", len(chains))
 events = add_straddles(events, chains)
 
 del chains, event_days
+
+print("===============Targets===============")
+events = add_target(events)
 
 print("===============Save===============")
 save_derived(events, "events")

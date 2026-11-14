@@ -213,3 +213,13 @@ def add_hist_move(events, n=8):
     print("Missing Values:      ",missing_value)
 
     return events
+
+def add_target(events) -> pd.DataFrame:
+    df = events.copy()
+    df["floored_abs_move_simple"] = np.clip(df["abs_move_simple"],min=0.001)
+    print("moves floored at 0.1%:", ((df["straddle_status"] == "ok") & (df["abs_move_simple"] < 0.001)).sum())
+
+    df["move_ratio"] = df["floored_abs_move_simple"].where(df["straddle_status"] == "ok") / df["implied_move"]
+    df["y"] = np.log(df["move_ratio"])
+
+    return df
