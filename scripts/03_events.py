@@ -1,13 +1,14 @@
 import pandas as pd
 
 from earning_vol.events import (trading_calendar, add_event_days, add_prices, add_moves,
-                                add_hist_move, add_labels, add_straddles, add_target)
+                                add_hist_move, add_labels, add_straddles, add_target,
+                                add_market_cap)
 from earning_vol.clean import available_tickers
 from earning_vol.io import load_clean, save_derived
 from earning_vol.config import RAW_DATASETS
 
 print("===============Load===============")
-prices = load_clean("stock_prices", columns=["ticker", "company", "date", "open", "close", "corporate_action"])
+prices = load_clean("stock_prices", columns=["ticker", "company", "date", "open", "close", "corporate_action","unadjusted_close"])
 events = load_clean("earning_calendar").drop(columns=["reported_earning"])   # only known after the report
 rows_in = len(events)
 print("calendar events:", rows_in)
@@ -51,10 +52,13 @@ events = add_straddles(events, chains)
 
 del chains, event_days
 
-print("===============Targets===============")
+print("================Targets=================")
 events = add_target(events)
 
-print("===============Save===============")
+print("===============Market Cap===============")
+events = add_market_cap(events)
+
+print("===================Save==================")
 save_derived(events, "events")
 print("rows in: ", rows_in)
 print("rows out:", len(events))

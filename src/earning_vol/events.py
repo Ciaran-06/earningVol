@@ -45,7 +45,7 @@ def add_event_days(events: pd.DataFrame, calendar: pd.DatetimeIndex) -> pd.DataF
 def add_prices(events,prices):
     events = events.copy()
     pre_merge_len = events.shape[0]
-    entry_prices = prices[["company", "date", "close"]].rename(columns={"date": "entry_date", "close": "close_entry"})
+    entry_prices = prices[["company", "date", "close","unadjusted_close"]].rename(columns={"date": "entry_date", "close": "close_entry","unadjusted_close":"unadjusted_close_entry"})
     events = events.merge(entry_prices,how="left",on=["company","entry_date"])
     reaction_prices = prices[["company", "date", "open", "close", "corporate_action"]].rename(
     columns={"date": "reaction_date", "open": "open_reaction", "close": "close_reaction"})
@@ -206,8 +206,6 @@ def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict 
 
 def add_hist_move(events, n=8):
     events = events.sort_values(["company","report_date"])
-    events.groupby("company")
-    #events.shift(1), (np.rolling(n,min_periods = n)).mean()
     events["hist_move_8"] = events.groupby("company")["abs_move_simple"].transform(lambda s: s.shift(1).rolling(n,min_periods=n).mean())
     missing_value = (events["hist_move_8"].isna()).sum()
     print("Missing Values:      ",missing_value)
@@ -222,4 +220,14 @@ def add_target(events) -> pd.DataFrame:
     df["move_ratio"] = df["floored_abs_move_simple"].where(df["straddle_status"] == "ok") / df["implied_move"]
     df["y"] = np.log(df["move_ratio"])
 
+    return df
+
+def add_market_cap(events) -> pd.DataFrame:
+    df = events.copy()
+    df["market_cap_corr"] = df["market_cap"] * (df["unadjusted_close_entry"] / df["close_entry"])
+    df = df.sort_values(["company","report_date"])
+    df["market_cap_prev"] = df.groupby("company")["market_cap_corr"].transform(lambda s: s.shift(1).ffill())
+
+    print("NaN Events Corr:             ",df["market_cap_corr"].isna().sum())
+    print("NaN Events Prev:             ",df["market_cap_prev"].isna().sum())
     return df

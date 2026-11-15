@@ -1,6 +1,6 @@
 # DATA.md — data dictionary, cleaning rules and known gaps
 
-Last updated: 2026-11-14. After every download, rerun `scripts/01_manifest.py` → `02_clean.py` → `03_events.py` and update this file.
+Last updated: 2026-11-15. After every download, rerun `scripts/01_manifest.py` → `02_clean.py` → `03_events.py` and update this file.
 
 ## Sources
 
@@ -136,10 +136,9 @@ Checks after the run: readback counts match for all four; **no symbol appears un
 - `time_of_day_code`: `BMO` (before market open: the price reacts on the report date) or `AMC` (after market close: the price reacts the next trading day). Anything else would become `UNKNOWN` (none so far).
 - No dates beyond 2026-11-03 (the requests ended there), so no scheduled future reports.
 - **For many renamed companies the history only starts at the rename** (e.g. META from 2022). See *Earnings calendar gaps*.
-- **`market_cap` is point-in-time but understated by later splits.** It appears to be split-adjusted price × the share count at the time (AAPL Jan 2004: $156M stored vs ~$8.7B actual; 56 = 2 × 7 × 4, Apple's later splits). Recent values (no later splits) are correct. Correct it in the events step with
-
-  `true market cap = market_cap × unadjusted_close / close` (prices on the report date).
-- For universe selection or features, use the market cap from **before** an event (previous report or start of year), never the event's own value: for BMO reports it may already include the reaction.
+- **`market_cap` is point-in-time but understated by later splits.** It appears to be split-adjusted price × the share count at the time (AAPL Jan 2004: $156M stored vs ~$8.7B actual; 56 = 2 × 7 × 4, Apple's later splits). Recent values (no later splits) are correct. Corrected in `03_events` as `market_cap_corr` (see *Processed: events*).
+- **`market_cap` is missing on 4,880 of the 44,085 events (11%)**, spread evenly across years (9–14% a year, 5% in 2026), so it is not a broken period. **22 of 645 companies have no cap on any event:** AMTM, BRK_B, CITGQ, CPPRQ, CTB, CXO, FCPT, FDXF, FHI, FTRCQ, HONA, LM, MXIM, MYL, NAV, NLSN, NXH, Q, RRD, STI, SW, TIF (recent spin-offs, short-lived bankrupt names, acquired companies). **BRK_B matters:** Berkshire is always among the largest companies, so the point-in-time universe must include or exclude it explicitly.
+- For universe selection or features, use the market cap from **before** an event (`market_cap_prev`), never the event's own value: for BMO reports it may already include the reaction.
 - Converted to decimal (73+ raw files stored it as an integer).
 
 ### ivx
@@ -174,11 +173,24 @@ One row per earnings event that has prices on both its entry and reaction day.
 **Construction**
 1. **Trading calendar** = the dates SPY traded, from `stock_prices`.
 2. **Reaction day:** BMO → the first trading day on or after the report date; AMC → the first trading day *after* the report date (`searchsorted`, `side="left"` for BMO and `side="right"` for AMC). **Entry day** = the trading day before the reaction day. Weekend and holiday reports roll forward correctly (e.g. a Saturday report before Memorial Day reacts on the Tuesday).
-3. **Prices** (split-adjusted, so the ratios are right across splits): `close_entry` on the entry day; `open_reaction`, `close_reaction` and `corporate_action` on the reaction day.
-4. **Moves:** `r_event` = log(`close_reaction` / `close_entry`), `abs_move` = |`r_event`|, `gap` = log(`open_reaction` / `close_entry`) (the overnight part of the move).
-5. **Labels:** `has_chains` = the company is one of the 49 chain names (**company-level**: whether a given event actually has a chain on its entry day is decided in the implied-move step); `is_holdout` = `report_date` ≥ `HOLDOUT_START` (2024-01-01).
+3. **Prices** (split-adjusted, so the ratios are right across splits): `close_entry` and `unadjusted_close_entry` on the entry day; `open_reaction`, `close_reaction` and `corporate_action` on the reaction day.
+4. **Moves (`add_moves`):** `r_event` = log(`close_reaction` / `close_entry`), `abs_move` = |`r_event`|, `gap` = log(`open_reaction` / `close_entry`) (the overnight part of the move), and **`abs_move_simple`** = |`close_reaction` / `close_entry` − 1|. The simple move is the one compared with option prices, because a straddle pays |S − K|, a simple move (NVDA 2023-05-24: 0.244 simple vs 0.218 log).
+5. **Benchmark B (`add_hist_move`):** `hist_move_8` = the mean `abs_move_simple` of the company's **previous 8 events** (sort by company and date, then per company `shift(1)` → `rolling(8, min_periods=8).mean()`). The shift keeps the event out of its own average; `min_periods=8` gives NaN until 8 real prior events exist, so rename gaps don't pass a short history off as a full one. The window counts **events, not time**.
+6. **Market cap (`add_market_cap`):**
+   - `market_cap_corr` = `market_cap` × `unadjusted_close_entry` / `close_entry` (the split factor on the entry day, the last close before the news).
+   - `market_cap_prev` = the **last known** `market_cap_corr` from an earlier event of the same company (per company `shift(1)` → `ffill()`). Fills only forward in time, never across companies. Use this one for ranking and features.
+7. **Labels:** `has_chains` = the company is one of the 49 chain names (**company-level**: whether a given event actually has a chain on its entry day is decided by the straddle step); `is_holdout` = `report_date` ≥ `HOLDOUT_START` (2024-01-01).
+8. **Straddles (`add_straddles`, `pick_straddle`, `price_exit`)**, for chain companies only. Chains are first cut to rows on events' entry or reaction days (9,636,100 → 5,525,302 rows).
+   - **Entry (entry-day close):**
+     - **expiry** = the earliest one on or after the reaction day, so the option is alive through the move
+     - **quotes** = keep bid > 0 and `preiv` present, then keep only strikes where **both** the call and the put pass
+     - **strike** = the one closest to spot (spot = the chain's `underlying_price`, which equals `unadjusted_close`); ties go to the first strike found
+     - **output:** straddle bid / mid / ask = call + put, `implied_move` = straddle mid / spot, `strike_gap` = (strike − spot) / spot, and both legs' `preiv`
+   - **Exit (reaction-day close):** the **same expiry and strike**, with no quote filter (whatever price exists is the price you'd face): `exit_bid` / `exit_mid` / `exit_ask`, `exit_spot`.
+   - `straddle_status` records the outcome: `ok`, `no chain on entry day`, `multiple spots`, `no expiry`, `no valid strike`, `no chain on reaction day`, `no exit quote`.
+9. **Target (`add_target`):** `move_ratio` = `floored_abs_move_simple` / `implied_move` and **y = log(`move_ratio`)**, for `ok` events only (NaN elsewhere). `floored_abs_move_simple` = `abs_move_simple` with a **floor of 0.001 (0.1%)**, so a zero move doesn't give log 0 = −∞. Zero moves are floored, not dropped: they are the best outcome for a seller, so dropping them would bias the sample.
 
-Columns: `ticker`, `company`, `report_date`, `time_of_day_code`, `entry_date`, `reaction_date`, `close_entry`, `open_reaction`, `close_reaction`, `corporate_action`, `r_event`, `abs_move`, `gap`, `estimate`, `market_cap`, `stock_id`, `symbol_at_date`, `has_chains`, `is_holdout`. (`reported_earning` is dropped on load, see lookahead warnings.)
+Columns: `ticker`, `company`, `report_date`, `time_of_day_code`, `entry_date`, `reaction_date`, `close_entry`, `unadjusted_close_entry`, `open_reaction`, `close_reaction`, `corporate_action`, `r_event`, `abs_move`, `gap`, `abs_move_simple`, `hist_move_8`, `estimate`, `market_cap`, `market_cap_corr`, `market_cap_prev`, `stock_id`, `symbol_at_date`, `has_chains`, `is_holdout`, `straddle_status`, `expiry`, `strike`, `spot`, `strike_gap`, `call_preiv`, `put_preiv`, `straddle_bid`, `straddle_mid`, `straddle_ask`, `implied_move`, `exit_bid`, `exit_mid`, `exit_ask`, `exit_spot`, `floored_abs_move_simple`, `move_ratio`, `y`. (`reported_earning` is dropped on load, see lookahead warnings.)
 
 **Counts: 48,035 calendar events → 44,085 events.** Every lost event is accounted for:
 
@@ -210,6 +222,24 @@ Timing test, the median |daily log return| around the reaction day. If the timin
 | Median \|return\| | 0.0096 | 0.0097 | 0.0106 | **0.0300** | 0.0131 | 0.0108 | 0.0102 |
 
 Day 0 is 2.5× the average of days ±1 and about 3× the quiet days. Day +1 is slightly raised, which is normal (vol stays high after earnings).
+
+**Straddles, benchmark B, target and market cap (2026-11-14 / 15), all checked**
+
+| Item | Result |
+|---|---|
+| `straddle_status` (4,233 chain-company events) | **3,239 `ok`** (77%), 988 no chain on entry day, 4 no valid strike, 2 no exit quote |
+| Missing entry chains | 982 of the 988 are 2004–2009 (chains were only downloaded from 2010); 6 one-offs in 2010–2024, not yet investigated |
+| `ok` events: before 2024 / holdout | 2,665 / 574 |
+| Median `implied_move` (`ok`) | 4.0% |
+| Median entry bid–ask spread, % of straddle mid | 6.6%, so a sell-at-bid / buy-at-ask round trip costs roughly 6–7% of the premium |
+| NVDA 2023-05-24 straddle | expiry 2023-05-26, strike 305, spot 305.38, 21.25 / 21.83 / 22.40, `implied_move` 0.0715; exit spot 379.8, exit 73.96 / 74.67 / 75.37 (≈ intrinsic 74.80) |
+| NVDA 2023-05-24 target | `move_ratio` 3.41, y = 1.227 |
+| `hist_move_8` | 5,024 NaN (≈ first 8 events of each company); NVDA 2023-05-24 = 0.05725, identical to a hand-computed mean of the previous 8 moves |
+| Floored moves (`ok` events with a move < 0.1%) | 67 (2.1%), giving y ≈ −3.7. Robustness check planned with a 0.05% floor |
+| Median `move_ratio` (`ok`) / share > 1 | 0.70 / 34%. The stock usually moves less than the options price in (the variance risk premium), but a third of the time more |
+| Market cap split factor (`market_cap_corr` / `market_cap`) | AAPL 2004-01-14: 56 (corrected $8.74B); NVDA 2023-05-24: 10 ($757B); 2026 events: 1 |
+| `market_cap_corr` NaN | 4,880 (all from the calendar; `unadjusted_close_entry` is never missing) |
+| `market_cap_prev` NaN | 1,241 after carrying forward (was 5,478 with a plain shift): each company's events before its first known cap, plus the 22 companies with none |
 
 ## Earnings calendar gaps (renamed companies)
 
@@ -280,6 +310,7 @@ For many renamed companies, the earnings calendar **starts at the rename**, whil
 - **Calendar rename gaps:** about 3,700 events in total (see *Earnings calendar gaps*).
 - **Old option data:** before ~2010 there were no weekly options and quotes were thinner (e.g. MCD 2010: ~61 contracts per side vs thousands for recent NVDA days), so implied moves are noisier. Check results on the post-2010 subsample.
 - **Skew:** daily skew series exist only for NVDA, SPX and SPY (see *Skew*).
+- **Market cap:** 11% of calendar caps are missing (evenly spread); 22 companies have none, including **BRK_B** (see *earning_calendar*).
 
 ## Open TODOs
 
@@ -290,3 +321,6 @@ For many renamed companies, the earnings calendar **starts at the rename**, whil
 - Point-in-time chain download (top ~150 by corrected market cap).
 - EDGAR 8-K calendar, for the rename gaps and as a timing robustness check.
 - `ivs` for more names (test a multi-year range per call first).
+- The 6 events from 2010 onwards with no entry-day chain: check whether they share a cause.
+- Decide BRK_B's treatment in the point-in-time universe (manual cap, or explicit exclusion).
+- Robustness: rerun the target with a 0.05% floor.
