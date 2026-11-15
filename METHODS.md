@@ -77,3 +77,92 @@ with $B_{i,j}$ left undefined (NaN) when company $i$ has fewer than 8 earlier ev
 - *Reason, 8 events:* companies report quarterly, so 8 events cover about two years. That is long enough to average out one unusual quarter, and short enough to follow changes in how much a company typically moves.
 - *Limitation:* the window counts events, not time. If events are missing from the middle of a company's history, the 8 events stretch over more than two years.
 - *Check:* 5,024 events are NaN, about the first 8 of each company. NVDA 2023-05-24 gives $B = 0.05725$, identical to a hand-computed mean of its previous 8 moves.
+
+## 4. Straddles
+
+Straddles are built only for the 49 companies with option chains.
+
+**Notation.** $S$ = spot on the entry day, $K$ = strike, $T$ = expiry date. $C$ and $P$ are the call and put prices; subscripts bid, mid and ask give the quote, with mid $= (\text{bid} + \text{ask})/2$.
+
+**Step 1: Restrict the chains to event days.** Only chain rows dated on an event's entry or reaction day are kept (9,636,100 → 5,525,302 rows).
+- *Reason:* the straddle is only priced on those two days.
+
+**Step 2: Spot.** $S$ is the chain's underlying price on the entry day. If a day's chain shows more than one spot value, the event is skipped.
+- *Reason:* strikes are real historical strikes, so they must be compared with the real traded price. The chain's own underlying price is the price the option quotes were taken against, and it equals the unadjusted close.
+
+**Step 3: Expiry.** $T$ is the earliest expiry on or after the reaction day.
+- *Reason:* an option that expires before the reaction day is gone before the move happens. The earliest valid expiry carries the least time value unrelated to earnings.
+
+**Step 4: Usable quotes.** A contract is usable if its bid is above zero and its own implied volatility (`preiv`, solved from that contract's price) exists. A strike is kept only if both its call and its put are usable.
+- *Reason:* a zero bid means no one is buying, so the contract cannot be sold. An interpolated IV is not a price anyone quoted. A straddle needs both legs, so a strike with one dead leg cannot be traded.
+
+**Step 5: Strike.** $K$ is the usable strike closest to $S$; ties go to the lower strike.
+- *Reason:* an at-the-money straddle bets on the size of the move, not its direction. The further $K$ is from $S$, the more the position also bets on direction.
+
+**Step 6: Entry prices and implied move.**
+$$\text{straddle}_{\text{bid}} = C_{\text{bid}} + P_{\text{bid}}, \quad \text{straddle}_{\text{mid}} = C_{\text{mid}} + P_{\text{mid}}, \quad \text{straddle}_{\text{ask}} = C_{\text{ask}} + P_{\text{ask}}$$
+$$M^{\text{imp}} = \frac{\text{straddle}_{\text{mid}}}{S}, \qquad \text{strike gap} = \frac{K - S}{S}$$
+- *Reason:* at expiry the straddle pays $|S_T - K|$. With $K \approx S$, that payoff divided by $S$ is the simple absolute move $m$ from §3. The straddle's price as a fraction of spot is therefore the market's expected absolute move, directly comparable with $m$. The mid is used as the fair-value estimate; the bid and ask are kept for pricing trades.
+
+**Step 7: Exit.** The same expiry and strike are priced at the reaction-day close, with no quote filter.
+- *Reason:* at exit you hold a specific contract and cannot switch to a better-quoted one, so whatever quote exists is the price you face.
+
+**Step 8: Outcome.** Each chain-company event records a status.
+
+| Status | Events |
+|---|---|
+| ok | 3,239 |
+| no chain on entry day | 988 |
+| no valid strike | 4 |
+| no exit quote | 2 |
+| **Total (chain-company events)** | **4,233** |
+
+Of the 988 events with no entry-day chain, 982 are from 2004–2009, before chains were downloaded. Of the 3,239 `ok` events, 2,665 are before 2024 and 574 are in the holdout.
+- *Check:* NVDA 2023-05-24: $T$ = 2023-05-26, $K = 305$, $S = 305.38$, straddle 21.25 / 21.83 / 22.40, $M^{\text{imp}} = 0.0715$. Exit spot 379.80, exit straddle 73.96 / 74.67 / 75.37, close to the intrinsic value $|379.80 - 305| = 74.80$.
+- *Summary:* median $M^{\text{imp}}$ = 4.0%; median entry bid–ask spread = 6.6% of the straddle mid.
+
+**Limitations.**
+- $M^{\text{imp}}$ also prices the ordinary trading days between the reaction day and expiry, not only the earnings move. Before weekly options (roughly 2015 for most names) this could be up to a month. It inflates $M^{\text{imp}}$, lowers the move ratio, and makes selling look better than it is.
+- There is no fallback expiry: if the earliest expiry has no usable strike, the event fails (4 events).
+- The entry filter checks the bid, not that ask ≥ bid. One crossed quote each is known in TSLA and JPM.
+
+## 5. Target
+
+**Step 1: Floor the move.**
+$$\tilde m_{i,j} = \max(m_{i,j},\ 0.001)$$
+- *Reason:* a zero move would give $\log 0 = -\infty$. Zero moves are floored, not dropped: they are the best outcome for a seller, so dropping them would bias the sample against selling.
+
+**Step 2: Move ratio and target.**
+$$\text{ratio}_{i,j} = \frac{\tilde m_{i,j}}{M^{\text{imp}}_{i,j}}, \qquad y_{i,j} = \log(\text{ratio}_{i,j})$$
+Computed for `ok` events only; NaN elsewhere.
+- *Reason, ratio:* it compares the realised move with the move the options priced in. A ratio above 1 means the stock moved more than priced (good for a buyer), below 1 less (good for a seller).
+- *Reason, log:* on the ratio scale, "twice as big" (2) and "half as big" (0.5) sit at unequal distances from 1. On the log scale they sit at $+0.69$ and $-0.69$, symmetric around 0. The log also pulls in very large ratios, so a few huge moves do not dominate a regression.
+
+**Checks.**
+- 67 `ok` events (2.1%) are floored, giving $y \approx -3.7$.
+- Median ratio 0.70, and 34% of events are above 1. The stock usually moves less than the options price in (the variance risk premium), but a third of the time it moves more.
+- NVDA 2023-05-24: ratio $= 0.244 / 0.0715 = 3.41$, $y = 1.227$.
+
+**Limitations.**
+- The floored events form a cluster in the left tail of $y$. A robustness check with a 0.05% floor is planned.
+- The target uses the mid price. Trades are priced at bid and ask (see NOTES.md), so a forecastable $y$ is not automatically a profitable one.
+
+## 6. Market Cap
+
+**Step 1: Split correction (`market_cap_corr`).**
+$$\text{cap}^{\text{corr}}_{i,j} = \text{cap}_{i,j} \times \frac{C^{\text{unadj}}_{i,j}}{C^{\text{entry}}_{i,j}}$$
+where $C^{\text{unadj}}$ is the unadjusted entry-day close and $C^{\text{entry}}$ the split-adjusted one.
+- *Reason:* the calendar's market cap is the split-adjusted price times the share count at the time, so it is understated by every later split. The ratio of unadjusted to adjusted close is exactly the later-split factor, so multiplying by it restores the true cap. The entry day is used because it is the last close before the news.
+- *Check:* AAPL 2004-01-14: factor 56 (Apple's later splits, $2 \times 7 \times 4$), corrected cap \$8.74B. NVDA 2023-05-24: factor 10, \$757B. 2026 events: factor 1.
+
+**Step 2: Last known cap (`market_cap_prev`).** For each event, the most recent `market_cap_corr` from an **earlier** event of the same company, carried forward over missing values. It never fills backward in time or across companies.
+- *Reason:* for a BMO report, the event's own cap may already include that day's reaction, so it is not known at entry. A cap one or a few quarters old is close enough for ranking companies by size. This is the version used for ranking and features.
+- *Check:* `market_cap_corr` is missing on 4,880 events (11%, spread evenly across years). After carrying forward, `market_cap_prev` is missing on 1,241: each company's events before its first known cap, plus the 22 companies with no cap at all.
+
+**Limitation.** 22 companies have no cap on any event, including BRK_B, which is always among the largest companies. Its treatment in the point-in-time universe is still to be decided.
+
+## 7. Sample Labels and Splits
+
+- `has_chains`: the company is one of the 49 chain names. This is a company-level label; whether a given event has a usable straddle is recorded by `straddle_status`.
+- `is_holdout`: report date on or after 2024-01-01 (6,110 events, 13.9%; 574 `ok` straddle events).
+- *Reason:* the holdout is fixed by date before any modelling and stays untouched until the final evaluation, so the final result is not tuned to it. A date split, rather than a random one, matches how a forecast would be used: trained on the past, applied to the future.
