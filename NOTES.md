@@ -9,24 +9,28 @@ The ratio of realised to implied move is predictable from entry-day information,
 ## Kill Test (fixed before seeing results)
 
 ### Sample
-- Pre-2024 `ok` events (2,665) **that also have `hist_move_8`**. Every rule and the linear model use this same sample; the final count is logged with the result.
+- Pre-2024 (`is_holdout` False) `ok` events **that also have `hist_move_8`**. Every rule and the linear model use this same sample.
+- **n = 2,620** (44,085 events → 37,975 pre-2024 → 2,665 `ok` → 2,620 with `hist_move_8`), report dates 2010-01-14 to 2023-12-21. Fixed 2026-11-16 by `strategy.kill_sample`, before any P&L was computed.
 - *Reason:* rules 2 and 3 need benchmark B, so running "always sell" on a larger sample would make the comparison unfair.
 
 ### Rules
 1. Always sell the straddle.
 2. Sell if the implied move is above benchmark B ($M^{\text{imp}} > B$).
 3. Buy if the implied move is below benchmark B ($M^{\text{imp}} < B$).
+- An event with $M^{\text{imp}} = B$ exactly is traded by neither rule 2 nor rule 3.
 
 ### Pricing and P&L
 - One straddle per event, opened at the entry-day close and closed at the reaction-day close (not held to expiry).
-- Sell: sell at the entry bid, buy back at the exit ask. Buy: buy at the entry ask, sell at the exit bid.
+- Sell: sell at the entry bid, buy back at the exit ask, floored at intrinsic value. Buy: buy at the entry ask, sell at the exit bid.
 - P&L is measured as a fraction of the entry premium:
-$$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \text{exit ask}}{\text{entry mid}}, \qquad \text{P\&L}_{\text{buy}} = \frac{\text{exit bid} - \text{entry ask}}{\text{entry mid}}$$
+$$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \max\left(\text{exit ask},\ |S_{\text{exit}} - K|\right)}{\text{entry mid}}, \qquad \text{P\&L}_{\text{buy}} = \frac{\text{exit bid} - \text{entry ask}}{\text{entry mid}}$$
 - *Reason:* dividing by the premium makes a \$20 stock and a \$900 stock comparable, and it is on the same scale as the move ratio.
-- The t-statistic is $\bar{x} / (s / \sqrt{n})$ over events.
-- *Rule*: A seller's buy-back is priced at $\max(\text{exit ask,} \, |S_{\text{exit}} - K|)$
-- **why** a straddle can't be bought below its intrinsic value, so an ask below it is a timing artefact or a bad quote. The floor only ever makes selling look worse, so it's conservative.
-- **Evidance:** 10 events affected by a few cents (max $0.40); negligible now, but protects later universes.
+- **Intrinsic floor:** a seller's buy-back is priced at $\max(\text{exit ask},\ |S_{\text{exit}} - K|)$.
+    - *Reason:* a straddle can't be bought below its intrinsic value, so an ask below it is a timing artefact or a bad quote. The floor only ever makes selling look worse, so it is conservative.
+    - *Evidence:* 10 events affected by a few cents (max \$0.40); negligible now, but it protects later universes.
+- **Mean and t-statistic per traded event:** each rule's mean and $t = \bar{x} / (s / \sqrt{n})$ are taken over the events that rule trades only. Untraded events are not counted as 0.
+    - *Reason:* counting untraded events as 0 changes both the mean and the t-statistic, so the choice is fixed before any P&L is seen.
+- *Check:* NVDA 2023-05-24: sell $= (21.25 - 75.37)/21.83 = -2.480$, buy $= (73.96 - 22.40)/21.83 = 2.362$, matching `strategy.straddle_pnl`.
 
 ### Linear model
 - OLS of $y$ on a single feature, $x = \log(B / M^{\text{imp}})$.
@@ -54,6 +58,7 @@ $$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \text{exit ask}}{\text{en
 - *Reason:* before weekly options, the chosen expiry often ran well past the reaction day (median 23 days in 2010, 4 in 2011). Those implied moves include non-earnings time value, which inflates them and biases the test toward selling. From 2013, over 93% of events expire within a week of the reaction day.
 - *How it's read:* reported next to the main result. If "always sell" passes on the full sample but not from 2013, the full-sample pass is most likely the expiry artefact, not an edge.
 - Chosen on 2026-11-16 from the days-to-expiry table (DATA.md), before any P&L was computed.
+
 ## Current Decisions
 
 ### Data
