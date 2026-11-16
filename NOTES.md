@@ -59,6 +59,88 @@ $$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \max\left(\text{exit ask}
 - *How it's read:* reported next to the main result. If "always sell" passes on the full sample but not from 2013, the full-sample pass is most likely the expiry artefact, not an edge.
 - Chosen on 2026-11-16 from the days-to-expiry table (DATA.md), before any P&L was computed.
 
+## Kill Test Result (2026-11-16)
+
+Pre-registration commit: `985103f` (made before the run). Code: `src/earning_vol/strategy.py`.
+
+### Rules (n = 2,620, P&L as a fraction of the entry premium, after bid/ask)
+
+| Rule | n | Mean P&L | Std | t |
+|---|---|---|---|---|
+| Always sell | 2,620 | −6.7% | 0.620 | −5.51 |
+| Sell rich ($M^{\text{imp}} > B$) | 1,914 | −5.5% | 0.584 | −4.14 |
+| Buy cheap ($M^{\text{imp}} < B$) | 706 | −7.2% | 0.684 | −2.79 |
+
+No ties: sell rich + buy cheap = 2,620.
+
+### Linear model (train 2010–18, test 2019–23)
+
+| n train | n test | $a$ | $b$ | $R^2$ vs training mean | $R^2$ vs 0 |
+|---|---|---|---|---|---|
+| 1,663 | 957 | −0.511 | 0.406 | **0.0026** | 0.229 |
+
+Checks: scoring the training mean as the model gives $R^2 = 0.0$ against itself; 1,663 + 957 = 2,620.
+
+### Verdict
+- **H1: pass** ($R^2 = 0.0026 > 0$), but only just. The gain is 0.26% of squared error and was not tested for significance.
+- **H2: fail.** No rule has a positive mean; all three are significantly negative.
+- **Decision (from the table above): trading is killed as specified. The project continues as a forecasting-only paper.**
+
+### Reading the result (interpretation, not new tests)
+- **$b = 0.41$:** past moves carry some information that options do not fully price. At $x = 0$, the predicted ratio is $e^{-0.51} \approx 0.60$ (the variance risk premium).
+- **The failure is cost, not direction.** For the same event, $\text{P\&L}_{\text{sell}} + \text{P\&L}_{\text{buy}} = -(\text{entry spread} + \text{exit spread})/\text{entry mid}$. Backing out from the totals:
+    - selling the 706 cheap events made $-0.098$, so their two spreads total about 17% of the premium (about 8.5% per round trip)
+    - buy cheap at mid $\approx (-0.072 + 0.098)/2 = +1.3\%$
+    - sell rich at mid $\approx +3\%$, *if* rich events have similar spreads (an assumption)
+    - so the signal points the right way in both directions, but the cost is several times the edge
+    - these are back-of-envelope estimates found after seeing the results; they are not evidence
+- **The median ratio of 0.70 is not what a seller earns.** A seller earns roughly the *mean* of $1 - \text{ratio}$, and a few very large ratios (e.g. NVDA 2023-05-24, −248%) pull that mean down.
+
+### Caveats on the result
+- **Selection bias:** the 49 names are today's large caps, which got there partly through big earnings moves. That biases against selling. It is unlikely to flip a mean of −6.7% with $t = -5.5$.
+- **End-of-day quotes:** closing bid/ask may be wider than what could be traded intraday, so the costs may be overstated. Not tested.
+- **Independence:** clustered event dates make the t-statistics overstate confidence (in both directions).
+
+### Robustness: from 2013-01-01 (pre-registered above)
+
+n = 2,098 (earliest report date 2013-01-11), same rules and pricing.
+
+| Rule | n | Mean P&L | Std | t |
+|---|---|---|---|---|
+| Always sell | 2,098 | −7.7% | 0.652 | −5.44 |
+| Sell rich ($M^{\text{imp}} > B$) | 1,517 | −6.2% | 0.618 | −3.93 |
+| Buy cheap ($M^{\text{imp}} < B$) | 581 | −6.7% | 0.707 | −2.28 |
+
+- **The result is robust:** every rule still loses, with $t$ well below −2. Dropping 2010–12 does not change the verdict.
+- **Selling gets worse from 2013** (always sell −7.7% vs −6.7%; sell rich −6.2% vs −5.5%). That is the expected direction: before weekly options, the longer expiries inflated the implied move and flattered sellers.
+- **Buy cheap is slightly less bad** (−6.7% vs −7.2%), but still significantly negative.
+
+## Follow-ups (written before running any of them)
+
+These are new questions raised by the result, so they are **not** part of the kill test and cannot change its verdict. At most two are run now; each is written here before it is run, and the holdout stays untouched.
+
+### 1. Cost diagnostics (descriptive, no pass/fail)
+- For each of the three rules: mean P&L at **mid** (entry mid to exit mid) and the mean **entry and exit spread** as a fraction of the entry mid.
+- *Reason:* it replaces the back-of-envelope estimates above with exact numbers, and separates "no premium" from "costs eat the premium".
+
+### 2. H3: hold to expiry (new hypothesis)
+- **Question:** does settling at expiry, instead of buying back on the reaction day, make any rule profitable after costs?
+- **Rule:** the same sample (n = 2,620) and the same three rules. Entry as before (sell at the bid, buy at the ask). Instead of trading out on the reaction day, the straddle is **settled at intrinsic value** $|S_T - K|$, where $S_T$ is the unadjusted close on the expiry date (from `stock_prices`).
+$$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - |S_T - K|}{\text{entry mid}}, \qquad \text{P\&L}_{\text{buy}} = \frac{|S_T - K| - \text{entry ask}}{\text{entry mid}}$$
+- **Criterion:** H3 passes if at least one rule has a positive mean P&L with $t > 2$.
+- **Also reported:** events with `days_to_expiry = 0` (settlement on the reaction day itself, no extra days of risk), and events from 2013-01-01.
+- *Reason:* settlement removes the exit spread, roughly half the round-trip cost. It also matches what the premium pays for: the move through expiry.
+- *Caveats, stated in advance:*
+    - for `days_to_expiry > 0`, the position carries ordinary-day risk until expiry
+    - this is a second test on the same sample after seeing the first result, so a pass is weaker evidence than the kill test would have been, and needs the holdout to confirm it
+
+### Parked (not run now)
+- **Fraction of the spread paid:** report P&L as a function of the fraction of the spread paid. Its realistic value is chosen from the Databento NVDA quote sample **before** looking at the P&L.
+- **Deciles of $x$:** gross P&L by decile of the feature, to see whether only the extremes clear the cost. Belongs to the forecasting paper.
+- **Target design for later models:** for trading, the mean of the ratio (or P&L directly) matters, and the log target compresses the tail that decides it. Revisit when designing the transformer.
+- **Pre-announcement straddles** (Gao, Xing & Zhang 2018, JFQA): buy about 3 days before the announcement and exit at the announcement date. It's a different trade (a bet on implied vol rising, not on the move), strongest in small, costly names. A separate project idea.
+- **Significance of the H1 $R^2$:** a bootstrap over test events. If run, it is reported whatever it shows.
+
 ## Current Decisions
 
 ### Data
@@ -83,3 +165,4 @@ $$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \max\left(\text{exit ask}
 - The kill test uses naive rules at bid/ask on pre-2024 data, with its criterion written in advance. That prevents choosing the rule after seeing results.
 - The kill test has its own fixed split (train 2010–18, test 2019–23), so the test period has enough events. The 2021-01-01 validation start in `config.py` applies to later model tuning (features, transformer), not to the kill test.
 - Features wait until after the kill test result. The outcome decides what the features are for.
+- **2026-11-16:** the kill test returned H1 pass, H2 fail. The project continues as a forecasting-only paper; trading questions continue only as pre-registered follow-ups (see above).

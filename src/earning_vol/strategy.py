@@ -63,8 +63,8 @@ def linear_oos(sample: pd.DataFrame) -> dict:
     test = ~train
 
     b,a = np.polyfit(x[train],y[train],1)
-    y_hat = a + b * x[test]
     train_mean = y[train].mean()
+    y_hat = a + b * x[test]
 
     sse_model = ((y[test]- y_hat)**2).sum()
     sse_mean = ((y[test] - train_mean)**2).sum()
