@@ -1,4 +1,4 @@
-# Notes - Last Updated 15/11/26
+# Notes - Last Updated 16/11/26
 
 ## Hypothesis
 The ratio of realised to implied move is predictable from entry-day information, and the prediction is tradable after bid/ask costs.
@@ -24,6 +24,9 @@ The ratio of realised to implied move is predictable from entry-day information,
 $$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \text{exit ask}}{\text{entry mid}}, \qquad \text{P\&L}_{\text{buy}} = \frac{\text{exit bid} - \text{entry ask}}{\text{entry mid}}$$
 - *Reason:* dividing by the premium makes a \$20 stock and a \$900 stock comparable, and it is on the same scale as the move ratio.
 - The t-statistic is $\bar{x} / (s / \sqrt{n})$ over events.
+- *Rule*: A seller's buy-back is priced at $\max(\text{exit ask,} \, |S_{\text{exit}} - K|)$
+- **why** a straddle can't be bought below its intrinsic value, so an ask below it is a timing artefact or a bad quote. The floor only ever makes selling look worse, so it's conservative.
+- **Evidance:** 10 events affected by a few cents (max $0.40); negligible now, but protects later universes.
 
 ### Linear model
 - OLS of $y$ on a single feature, $x = \log(B / M^{\text{imp}})$.
@@ -46,6 +49,11 @@ $$\text{P\&L}_{\text{sell}} = \frac{\text{entry bid} - \text{exit ask}}{\text{en
 - Many reports fall in the same weeks, so events are not independent and $t > 2$ overstates confidence. A robustness check clustered by reaction week comes later.
 - Three rules are tested, so the best of three passing $t > 2$ is easier than one pre-chosen rule passing. Report all three, not just the best.
 
+### Robustness (reported, not part of the criterion)
+- **Post-weeklies sample:** the same three rules, rerun on pre-2024 `ok` events with a report date on or after 2013-01-01.
+- *Reason:* before weekly options, the chosen expiry often ran well past the reaction day (median 23 days in 2010, 4 in 2011). Those implied moves include non-earnings time value, which inflates them and biases the test toward selling. From 2013, over 93% of events expire within a week of the reaction day.
+- *How it's read:* reported next to the main result. If "always sell" passes on the full sample but not from 2013, the full-sample pass is most likely the expiry artefact, not an edge.
+- Chosen on 2026-11-16 from the days-to-expiry table (DATA.md), before any P&L was computed.
 ## Current Decisions
 
 ### Data

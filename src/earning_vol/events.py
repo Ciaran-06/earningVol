@@ -155,7 +155,7 @@ def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict 
 
     Expiry: the earliest one on or after the reaction day (the option must be alive through the move).
     Strike: the one closest to spot among strikes where BOTH the call and the put have a usable
-    quote (bid > 0 and preiv present). Ties go to the first strike found.
+    quote (bid > 0 and preiv present). Ties go to the lower strike.
 
     Returns a dict of results, or a short string saying why no straddle could be picked.
     """
@@ -180,6 +180,7 @@ def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict 
         return "no valid strike"
 
     # ATM strike = closest to spot
+    valid = valid.sort_values("strike",ascending=True)
     distance = (valid["strike"] - spot).abs()
     atm_strike = valid.loc[distance.idxmin(), "strike"]
 
@@ -191,6 +192,8 @@ def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict 
     straddle_mid = call["mid"] + put["mid"]
     straddle_ask = call["ask"] + put["ask"]
 
+    time_to_expiry = (expiry - reaction_date).days
+    
     return {
         "expiry": expiry,
         "strike": float(atm_strike),
@@ -202,6 +205,7 @@ def pick_straddle(day_chain: pd.DataFrame, reaction_date: pd.Timestamp) -> dict 
         "straddle_mid": float(straddle_mid),
         "straddle_ask": float(straddle_ask),
         "implied_move": float(straddle_mid / spot),
+        "days_to_expiry": time_to_expiry
     }
 
 def add_hist_move(events, n=8):

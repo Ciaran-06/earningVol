@@ -1,6 +1,6 @@
 # DATA.md — data dictionary, cleaning rules and known gaps
 
-Last updated: 2026-11-15. After every download, rerun `scripts/01_manifest.py` → `02_clean.py` → `03_events.py` and update this file.
+Last updated: 2026-11-16. After every download, rerun `scripts/01_manifest.py` → `02_clean.py` → `03_events.py` and update this file.
 
 ## Sources
 
@@ -162,7 +162,8 @@ Checks after the run: readback counts match for all four; **no symbol appears un
 - **Contract key: (`company`, `date`, `expiration_date`, `strike`, `cp`).**
   - `option_id` is **missing in files before ~2018-04** (2,447 files have no `option_id` at all, 60 have it partly). Kept as a nullable integer (`Int64`) but never used as a key: deduplicating on it would collapse each day of those files to one row.
   - `option_symbol` is not a reliable key either: the option root changed over time (NVDA options used the root `UVA` in 2010).
-- Sanity checks (per ticker): 0 duplicate contracts, 0 bid < 0, 0 expiration < date, 0 cp not in {C, P}, 0 strike ≤ 0. **ask < bid: 1 row each in TSLA and JPM** (crossed quotes; JPM's appeared with the 2010–14 files; left in, never filled in the backtest).
+- Sanity checks (per ticker): 0 duplicate contracts, 0 bid < 0, 0 expiration < date, 0 cp not in {C, P}, 0 strike ≤ 0. **ask < bid: 1 row**, TSLA 2013-05-09 (72.5 call expiring 2013-05-10, bid 5.00, ask 0.00): a missing ask stored as 0, not a true crossed quote. Left in; no `ok` straddle uses it (checked 2026-11-16). A JPM crossed row noted on 2026-11-14 is not in the clean layer (rechecked 2026-11-16 with all 111,042 JPM rows loaded).
+- **A missing ask can be stored as 0.** Entry is protected by the bid > 0 filter; at exit, a seller's buy-back is floored at intrinsic value in the kill test (see NOTES.md).
 - `price_open` / `price_high` / `price_low` are entirely null in 19 files (not used).
 - **SPX is not cleaned yet.** It is ~40M of the 49.2M chain rows, too large for 16GB RAM in one go. Plan: clean year by year (add a `years` filter to `load_raw` and a save that replaces one ticker-year). Not needed for `03_events` (an index has no earnings).
 
@@ -184,13 +185,13 @@ One row per earnings event that has prices on both its entry and reaction day.
    - **Entry (entry-day close):**
      - **expiry** = the earliest one on or after the reaction day, so the option is alive through the move
      - **quotes** = keep bid > 0 and `preiv` present, then keep only strikes where **both** the call and the put pass
-     - **strike** = the one closest to spot (spot = the chain's `underlying_price`, which equals `unadjusted_close`); ties go to the first strike found
-     - **output:** straddle bid / mid / ask = call + put, `implied_move` = straddle mid / spot, `strike_gap` = (strike − spot) / spot, and both legs' `preiv`
+     - **strike** = the one closest to spot (spot = the chain's `underlying_price`, which equals `unadjusted_close`); **ties go to the lower strike** (usable strikes are sorted ascending before the closest is picked; changed 2026-11-16 from "first strike found", which depended on row order)
+     - **output:** straddle bid / mid / ask = call + put, `implied_move` = straddle mid / spot, `strike_gap` = (strike − spot) / spot, both legs' `preiv`, and **`days_to_expiry`** = calendar days from the reaction day to expiry (0 = expires on the reaction day; measures how much non-earnings time value is in the implied move)
    - **Exit (reaction-day close):** the **same expiry and strike**, with no quote filter (whatever price exists is the price you'd face): `exit_bid` / `exit_mid` / `exit_ask`, `exit_spot`.
    - `straddle_status` records the outcome: `ok`, `no chain on entry day`, `multiple spots`, `no expiry`, `no valid strike`, `no chain on reaction day`, `no exit quote`.
 9. **Target (`add_target`):** `move_ratio` = `floored_abs_move_simple` / `implied_move` and **y = log(`move_ratio`)**, for `ok` events only (NaN elsewhere). `floored_abs_move_simple` = `abs_move_simple` with a **floor of 0.001 (0.1%)**, so a zero move doesn't give log 0 = −∞. Zero moves are floored, not dropped: they are the best outcome for a seller, so dropping them would bias the sample.
 
-Columns: `ticker`, `company`, `report_date`, `time_of_day_code`, `entry_date`, `reaction_date`, `close_entry`, `unadjusted_close_entry`, `open_reaction`, `close_reaction`, `corporate_action`, `r_event`, `abs_move`, `gap`, `abs_move_simple`, `hist_move_8`, `estimate`, `market_cap`, `market_cap_corr`, `market_cap_prev`, `stock_id`, `symbol_at_date`, `has_chains`, `is_holdout`, `straddle_status`, `expiry`, `strike`, `spot`, `strike_gap`, `call_preiv`, `put_preiv`, `straddle_bid`, `straddle_mid`, `straddle_ask`, `implied_move`, `exit_bid`, `exit_mid`, `exit_ask`, `exit_spot`, `floored_abs_move_simple`, `move_ratio`, `y`. (`reported_earning` is dropped on load, see lookahead warnings.)
+Columns: `ticker`, `company`, `report_date`, `time_of_day_code`, `entry_date`, `reaction_date`, `close_entry`, `unadjusted_close_entry`, `open_reaction`, `close_reaction`, `corporate_action`, `r_event`, `abs_move`, `gap`, `abs_move_simple`, `hist_move_8`, `estimate`, `market_cap`, `market_cap_corr`, `market_cap_prev`, `stock_id`, `symbol_at_date`, `has_chains`, `is_holdout`, `straddle_status`, `expiry`, `strike`, `spot`, `strike_gap`, `call_preiv`, `put_preiv`, `straddle_bid`, `straddle_mid`, `straddle_ask`, `implied_move`, `days_to_expiry`, `exit_bid`, `exit_mid`, `exit_ask`, `exit_spot`, `floored_abs_move_simple`, `move_ratio`, `y`. (`reported_earning` is dropped on load, see lookahead warnings.)
 
 **Counts: 48,035 calendar events → 44,085 events.** Every lost event is accounted for:
 
@@ -240,6 +241,28 @@ Day 0 is 2.5× the average of days ±1 and about 3× the quiet days. Day +1 is s
 | Market cap split factor (`market_cap_corr` / `market_cap`) | AAPL 2004-01-14: 56 (corrected $8.74B); NVDA 2023-05-24: 10 ($757B); 2026 events: 1 |
 | `market_cap_corr` NaN | 4,880 (all from the calendar; `unadjusted_close_entry` is never missing) |
 | `market_cap_prev` NaN | 1,241 after carrying forward (was 5,478 with a plain shift): each company's events before its first known cap, plus the 22 companies with none |
+
+**Straddle quality checks (2026-11-16), before the kill test**
+
+Scripts: `notebooks/check_pick_straddle.py` (hand-built tie / closest / dead-leg tests), `notebooks/old_vs_new_events.py` (rerun vs the saved previous `events.parquet`), `notebooks/check_straddle_quality.py`.
+
+| Check | Result |
+|---|---|
+| `pick_straddle` unit tests | 3 / 3 pass (tie → lower strike; closest strike wins; a strike with a zero-bid leg is skipped). The tie test fails with the sort removed, so it really tests the rule |
+| Rerun after the tie-rule fix and `days_to_expiry` | 44,085 events; statuses unchanged (3,239 / 988 / 4 / 2); **0 of 3,239 `ok` strikes changed**, so no real tie occurred |
+| NVDA 2023-05-24 after the rerun | strike 305, `implied_move` 0.0715, y = 1.227, `days_to_expiry` 1 |
+| Crossed quotes in `ok` straddles | 0 (the single ask < bid row is not used) |
+| `exit_ask` ≤ `exit_bid` (`ok`) | 0 |
+| `exit_ask` < intrinsic \|`exit_spot` − `strike`\| (`ok`) | 12: **10 real, a few cents each** (max \$0.40, V 2013-10-30; likely the stock and option closes being snapped at slightly different times), and **2 float-rounding artefacts** (GM 2017-04-28, JPM 2017-01-13: ask exactly equal to intrinsic). Total shortfall ≈ \$1 across 3,239 events. Handled by the intrinsic floor on buy-backs (NOTES.md) |
+
+`days_to_expiry` by year (`ok` events):
+
+| Year | 2010 | 2011 | 2012 | 2013 | 2014 | 2015 | 2016–2026 |
+|---|---|---|---|---|---|---|---|
+| Median days | 23 | 4 | 2 | 2 | 2 | 1 | 1–2 |
+| Share ≤ 7 days | 26% | 58% | 84% | 93% | 96% | 98% | 100% |
+
+Before weekly options were common, the chosen expiry often ran weeks past the reaction day, so the implied move also priced ordinary days. From 2013, over 93% of events expire within a week. This sets the post-weeklies robustness cut-off (2013-01-01) in NOTES.md.
 
 ## Earnings calendar gaps (renamed companies)
 
@@ -306,9 +329,9 @@ For many renamed companies, the earnings calendar **starts at the rename**, whil
 - **Survivorship bias:**
   - `hv` covers current members only.
   - Former members' prices and `ivx` were only downloaded for the 5-year chunks overlapping **one year before joining to one year after leaving**, while their calendars cover 2004–2026. Former members are therefore trimmed to roughly their membership window, but **current members keep their full history, including years before they joined**. Planned fix: an explicit "in the index on this date" flag for every event, built from the membership dates, instead of relying on price coverage by accident.
-- **Selection bias:** the 49-name option-chain universe is *today's* large caps, i.e. past winners, which biases straddle P&L (winners got there partly through big earnings surprises). Planned fix: include an event if the company was in the **top ~150 by split-corrected market cap on that date**, and spend the remaining calls of this cycle (before 2026-12-13) on those events' chains, 2015+ first (weekly expiries give cleaner implied moves). This also gives the kill test more holdout events, about 540 at present.
+- **Selection bias:** the 49-name option-chain universe is *today's* large caps, i.e. past winners, which biases straddle P&L (winners got there partly through big earnings surprises). Planned fix: include an event if the company was in the **top ~150 by split-corrected market cap on that date**, and spend the remaining calls of this cycle (before 2026-12-13) on those events' chains, 2015+ first (weekly expiries give cleaner implied moves). This also gives the final evaluation more holdout events (574 `ok` at present).
 - **Calendar rename gaps:** about 3,700 events in total (see *Earnings calendar gaps*).
-- **Old option data:** before ~2010 there were no weekly options and quotes were thinner (e.g. MCD 2010: ~61 contracts per side vs thousands for recent NVDA days), so implied moves are noisier. Check results on the post-2010 subsample.
+- **Old option data:** before ~2010 there were no weekly options and quotes were thinner (e.g. MCD 2010: ~61 contracts per side vs thousands for recent NVDA days), so implied moves are noisier. Chains start in 2010, and until weekly expiries became common the chosen expiry ran well past the reaction day (median 23 days in 2010, 4 in 2011), inflating the implied move. Results are also reported from 2013 onwards (see the `days_to_expiry` table and NOTES.md).
 - **Skew:** daily skew series exist only for NVDA, SPX and SPY (see *Skew*).
 - **Market cap:** 11% of calendar caps are missing (evenly spread); 22 companies have none, including **BRK_B** (see *earning_calendar*).
 

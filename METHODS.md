@@ -1,4 +1,4 @@
-# Methods - Last Updated: 15/11/26
+# Methods - Last Updated: 16/11/26
 
 ## 1. Data Sample
 
@@ -48,6 +48,7 @@ The sample is not point-in-time. Current members keep full history, including ye
 
 **Step 6: Attach prices.** Entry day: split-adjusted close and unadjusted close. Reaction day: open and close.
 - *Reason:* split-adjusted closes keep returns correct across splits. Unadjusted prices are kept for strikes, because historical strikes are not adjusted.
+
 
 **Step 7: Verification.** A median absolute-return test around the reaction day shows the spike on day 0 (0.0300) against about 0.010 on surrounding days, and two named events (NVDA 2023-05-24, NFLX 2022-04-19) line up.
 - *Reason:* a one-day error would move the spike to day −1 or +1, so this test catches timing mistakes directly.
@@ -100,8 +101,10 @@ Straddles are built only for the 49 companies with option chains.
 - *Reason:* an at-the-money straddle bets on the size of the move, not its direction. The further $K$ is from $S$, the more the position also bets on direction.
 
 **Step 6: Entry prices and implied move.**
+
 $$\text{straddle}_{\text{bid}} = C_{\text{bid}} + P_{\text{bid}}, \quad \text{straddle}_{\text{mid}} = C_{\text{mid}} + P_{\text{mid}}, \quad \text{straddle}_{\text{ask}} = C_{\text{ask}} + P_{\text{ask}}$$
 $$M^{\text{imp}} = \frac{\text{straddle}_{\text{mid}}}{S}, \qquad \text{strike gap} = \frac{K - S}{S}$$
+- Days to expiry $= T - $ reaction day, in calendar days, is recorded for each straddle (0 = the option expires on the reaction day).
 - *Reason:* at expiry the straddle pays $|S_T - K|$. With $K \approx S$, that payoff divided by $S$ is the simple absolute move $m$ from §3. The straddle's price as a fraction of spot is therefore the market's expected absolute move, directly comparable with $m$. The mid is used as the fair-value estimate; the bid and ask are kept for pricing trades.
 
 **Step 7: Exit.** The same expiry and strike are priced at the reaction-day close, with no quote filter.
@@ -122,9 +125,10 @@ Of the 988 events with no entry-day chain, 982 are from 2004–2009, before chai
 - *Summary:* median $M^{\text{imp}}$ = 4.0%; median entry bid–ask spread = 6.6% of the straddle mid.
 
 **Limitations.**
-- $M^{\text{imp}}$ also prices the ordinary trading days between the reaction day and expiry, not only the earnings move. Before weekly options (roughly 2015 for most names) this could be up to a month. It inflates $M^{\text{imp}}$, lowers the move ratio, and makes selling look better than it is.
+- $M^{\text{imp}}$ also prices the ordinary trading days between the reaction day and expiry, not only the earnings move. Before weekly options were common this gap was large: the median days to expiry was 23 in 2010 and 4 in 2011, against at most 2 from 2012 onwards. From 2013, over 93% of events expire within a week. The early years therefore have inflated implied moves and lower move ratios, which makes selling look better. Results are also reported from 2013 onwards (NOTES.md).
 - There is no fallback expiry: if the earliest expiry has no usable strike, the event fails (4 events).
-- The entry filter checks the bid, not that ask ≥ bid. One crossed quote each is known in TSLA and JPM.
+- One quote with ask < bid exists in the chains (a missing ask stored as 0). No `ok` straddle uses it.
+- On 10 `ok` events the exit ask is a few cents below the straddle's intrinsic value (max \$0.40), most likely because the stock and option closes are recorded at slightly different times. Buy-backs are floored at intrinsic value in the kill test, so this cannot flatter selling.
 
 ## 5. Target
 
