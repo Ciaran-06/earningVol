@@ -1,69 +1,74 @@
+"""Checks and results for the kill test and the cost diagnostics.
+
+Run from the repo root:  uv run python notebooks/strat_tester.py
+"""
 import pandas as pd
-import numpy as np
+
 from earning_vol.io import load_derived
-from earning_vol.strategy import kill_sample, straddle_pnl, rule_pnl, summarise, linear_oos
+from earning_vol.strategy import (
+    kill_sample, straddle_pnl, rule_pnl, summarise, linear_oos,
+    mid_pnl, spreads, cost_table,
+)
+
+
+def rules_table(sample: pd.DataFrame) -> pd.DataFrame:
+    """One row per rule: n, mean, std, t."""
+    rules = rule_pnl(sample)
+    return pd.DataFrame([summarise(p) for p in rules.values()], index=list(rules.keys()))
+
 
 events = load_derived("events")
-
 sample = kill_sample(events)
+sample_2013 = sample[sample["report_date"] >= "2013-01-01"]
 
 sell = straddle_pnl(sample, "sell")
 buy = straddle_pnl(sample, "buy")
-
-print("=============Robustness: from 2013-01-01==============")
-sample_2013 = sample[sample["report_date"] >= "2013-01-01"]
-print("n (from 2013):              ", len(sample_2013))
-print("Earliest report date:       ", sample_2013["report_date"].min())
-
-rules_2013 = rule_pnl(sample_2013)
-table_2013 = pd.DataFrame(
-    [summarise(pnl) for pnl in rules_2013.values()],
-    index=list(rules_2013.keys()),
-)
-print(table_2013.round(4).to_string())
-
-nvda_pos = sample[(sample["company"] == "NVDA") & (sample["report_date"] == "2023-05-24")].index
-print("Buy:                        ",buy.loc[nvda_pos].iloc[0])
-print("Sell:                       ",sell.loc[nvda_pos].iloc[0])
-
 rules = rule_pnl(sample)
-print("Length of Series:           ", len(rules["always_sell"]))
-print("Check for Data Loss:        ", len(rules["sell_rich"]) + len(rules["buy_cheap"]))
-print("Selected NVDA in sell rich: ", nvda_pos[0] in rules["sell_rich"].index)
-print("Selected NVDA in buy cheap: ", nvda_pos[0] in rules["buy_cheap"].index)
-print("Math Check:                 ", rules["sell_rich"].loc[nvda_pos[0]])
+spr = spreads(sample)
+nvda_idx = sample[(sample["company"] == "NVDA") & (sample["report_date"] == "2023-05-24")].index[0]
 
-print("=============Summarise===============")
-print("Series Normal [1,2,3]:      ",summarise(pd.Series([1,2,3])))
-pnl = rule_pnl(sample)
-always_sell = summarise(pnl["always_sell"])
-print("Summary of always sell:     ")
-print("Always Sell(n):             ",always_sell["n"])
-print("Always Sell(mean):          ",always_sell["mean"])
-print("Always Sell(std):           ",always_sell["std"])
-print("Always Sell(t):             ",always_sell["t"])
+# ================================================================= CHECKS
+print("\n================ Checks ================")
 
-print("=====================================")
-sell_rich = summarise(pnl["sell_rich"])
-print("Summary of sell rich:       ")
-print("Sell Rich(n):               ",sell_rich["n"])
-print("Sell Rich(mean):            ",sell_rich["mean"])
-print("Sell Rich(std):             ",sell_rich["std"])
-print("Sell Rich(t):               ",sell_rich["t"])
+print("-- summarise on [1, 2, 3] (expect n 3, mean 2, std 1, t 3.464)")
+print(summarise(pd.Series([1, 2, 3])))
 
-print("=====================================")
-buy_cheap = summarise(pnl["buy_cheap"])
-print("Summary of buy cheap:       ")
-print("Buy Cheap(n):               ",buy_cheap["n"])
-print("Buy Cheap(mean):            ",buy_cheap["mean"])
-print("Buy Cheap(std):             ",buy_cheap["std"])
-print("Buy Cheap(t):               ",buy_cheap["t"])
+print("\n-- NVDA 2023-05-24 (expect buy 2.362, sell -2.480)")
+print("buy:                        ", buy.loc[nvda_idx])
+print("sell:                       ", sell.loc[nvda_idx])
 
-print("=============Linear OOS==============")
-oos_result = linear_oos(sample)
-print("n_train:                    ", oos_result["n_train"])
-print("n_test:                     ", oos_result["n_test"])
-print("a:                          ", oos_result["a"])
-print("b:                          ", oos_result["b"])
-print("r2_vs_mean:                 ", oos_result["r2_vs_mean"])
-print("r2_vs_zero:                 ", oos_result["r2_vs_zero"])
+print("\n-- rule sizes (expect 2,620, and sell_rich + buy_cheap = 2,620)")
+print("always_sell:                ", len(rules["always_sell"]))
+print("sell_rich + buy_cheap:      ", len(rules["sell_rich"]) + len(rules["buy_cheap"]))
+print("NVDA in sell_rich:          ", nvda_idx in rules["sell_rich"].index)   # expect True
+print("NVDA in buy_cheap:          ", nvda_idx in rules["buy_cheap"].index)   # expect False
+
+print("\n-- cost identities (expect ~0)")
+print("max |sell + buy + spreads|: ", (sell + buy + spr["entry_spread"] + spr["exit_spread"]).abs().max())
+print("max |mid sell + mid buy|:   ", (mid_pnl(sample, "sell") + mid_pnl(sample, "buy")).abs().max())
+
+print("\n-- NVDA costs (expect mid sell -2.420, entry spread 0.053, exit spread 0.065)")
+print("mid sell:                   ", mid_pnl(sample, "sell").loc[nvda_idx])
+print("entry spread:               ", spr.loc[nvda_idx, "entry_spread"])
+print("exit spread:                ", spr.loc[nvda_idx, "exit_spread"])
+
+print("\n-- 2013 sample (expect n 2,098, first date 2013-01-11)")
+print("n:                          ", len(sample_2013))
+print("earliest report date:       ", sample_2013["report_date"].min())
+
+# ================================================================= RESULTS
+print("\n================ Rules: full sample ================")
+print(rules_table(sample).round(4).to_string())
+
+print("\n================ Rules: from 2013-01-01 ================")
+print(rules_table(sample_2013).round(4).to_string())
+
+print("\n================ Linear model (train 2010-18, test 2019-23) ================")
+for key, value in linear_oos(sample).items():
+    print(f"{key:<12}{value}")
+
+print("\n================ Cost diagnostics: full sample ================")
+print(cost_table(sample).round(4).to_string())
+
+print("\n================ Cost diagnostics: from 2013-01-01 ================")
+print(cost_table(sample_2013).round(4).to_string())

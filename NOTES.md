@@ -93,7 +93,7 @@ Checks: scoring the training mean as the model gives $R^2 = 0.0$ against itself;
     - buy cheap at mid $\approx (-0.072 + 0.098)/2 = +1.3\%$
     - sell rich at mid $\approx +3\%$, *if* rich events have similar spreads (an assumption)
     - so the signal points the right way in both directions, but the cost is several times the edge
-    - these are back-of-envelope estimates found after seeing the results; they are not evidence
+    - these are back-of-envelope estimates found after seeing the results; they are not evidence. **The exact numbers are in Follow-ups → Cost diagnostics** (buy cheap at mid: +1.3%, as estimated; sell rich at mid: +3.9%, slightly above the estimate)
 - **The median ratio of 0.70 is not what a seller earns.** A seller earns roughly the *mean* of $1 - \text{ratio}$, and a few very large ratios (e.g. NVDA 2023-05-24, −248%) pull that mean down.
 
 ### Caveats on the result
@@ -122,6 +122,35 @@ These are new questions raised by the result, so they are **not** part of the ki
 ### 1. Cost diagnostics (descriptive, no pass/fail)
 - For each of the three rules: mean P&L at **mid** (entry mid to exit mid) and the mean **entry and exit spread** as a fraction of the entry mid.
 - *Reason:* it replaces the back-of-envelope estimates above with exact numbers, and separates "no premium" from "costs eat the premium".
+
+**Result (2026-11-16).** Code: `strategy.mid_pnl`, `strategy.spreads`, `strategy.cost_table`. Means per traded event; spreads and cost as a fraction of the entry mid; the exit ask is floored at intrinsic, as in the kill test.
+
+Full sample (n = 2,620):
+
+| Rule | n | P&L at bid/ask | t | P&L at mid | t | Cost per trade | Entry spread | Exit spread |
+|---|---|---|---|---|---|---|---|---|
+| Always sell | 2,620 | −6.7% | −5.51 | +2.5% | 2.13 | 9.2% | 8.8% | 9.6% |
+| Sell rich | 1,914 | −5.5% | −4.14 | **+3.9%** | **3.02** | 9.4% | 9.1% | 9.8% |
+| Buy cheap | 706 | −7.2% | −2.79 | +1.3% | 0.50 | 8.5% | 8.0% | 9.0% |
+
+From 2013-01-01 (n = 2,098):
+
+| Rule | n | P&L at bid/ask | t | P&L at mid | t | Cost per trade | Entry spread | Exit spread |
+|---|---|---|---|---|---|---|---|---|
+| Always sell | 2,098 | −7.7% | −5.44 | +2.5% | 1.84 | 10.3% | 9.7% | 10.9% |
+| Sell rich | 1,517 | −6.2% | −3.93 | **+4.5%** | **2.92** | 10.7% | 10.2% | 11.2% |
+| Buy cheap | 581 | −6.7% | −2.28 | +2.5% | 0.83 | 9.2% | 8.5% | 9.9% |
+
+Checks: sell + buy + entry spread + exit spread = 0 on every event (max error 5e-16); mid sell + mid buy = 0 exactly; NVDA 2023-05-24 mid sell −2.421, entry spread 0.053, exit spread 0.065, matching hand calculations.
+
+**Reading it (descriptive; it cannot change the kill-test verdict):**
+- **There is an edge before costs, and it is in selling rich straddles.** At mid, sell rich makes +3.9% per trade ($t = 3.0$), and +4.5% from 2013. Always sell makes +2.5% (the variance risk premium, $t \approx 2$). Buy cheap is not distinguishable from zero.
+- **The benchmark-B signal adds to the premium:** sell rich beats always sell at mid by about 1.4 points (2 points from 2013), consistent with $b = 0.41$.
+- **Costs are 2–4 times the edge.** Crossing both spreads costs about 9–11% of the premium per trade, against a best edge of about 4%.
+- **The cost is split roughly evenly between entry and exit** (each about 9–11% of the premium as a full spread; cost per trade ≈ half of each). Mean spreads are higher than the 6.6% median entry spread in DATA.md, so a minority of events have very wide spreads.
+- **Spreads are wider from 2013.** Short-dated weekly straddles have small premiums, so the same spread in dollars is a larger fraction of the premium.
+- **What this means for H3 (hold to expiry):** settling at intrinsic removes only the exit half (about 4.9% for sell rich). The seller still pays half the entry spread (about 4.5%), against an edge at mid of 3.9%, so H3 looks close to break-even at best. The residual time value at exit (which a seller would keep) could tip it either way.
+- These are mid prices, which nobody trades at. A positive $t$ at mid is a description of the edge, not a tradable result.
 
 ### 2. H3: hold to expiry (new hypothesis)
 - **Question:** does settling at expiry, instead of buying back on the reaction day, make any rule profitable after costs?

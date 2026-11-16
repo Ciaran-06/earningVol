@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 
+RULE_SIDES = {"always_sell": "sell", "sell_rich": "sell", "buy_cheap": "buy"}
+
 def kill_sample(events: pd.DataFrame) -> pd.DataFrame:
     pre_filter_len = len(events)
 
@@ -84,3 +86,40 @@ def linear_oos(sample: pd.DataFrame) -> dict:
         "r2_vs_mean": r2_vs_mean,
         "r2_vs_zero": r2_vs_zero
     }
+
+def mid_pnl(sample: pd.DataFrame, side: str) -> pd.Series:
+    sell = (sample["straddle_mid"] - sample["exit_mid"]) / sample["straddle_mid"]
+    if side == "sell":
+        return sell
+    elif side == "buy":
+        return -sell
+    else:
+        raise ValueError(f"Must be 'buy' or 'sell' got {side!r}")
+
+def spreads(sample: pd.DataFrame) -> pd.DataFrame:
+    df = sample.copy()
+    exit_ask = np.maximum(df["exit_ask"], np.abs(df["exit_spot"] - df["strike"]))
+    df["entry_spread"] = (df["straddle_ask"] - df["straddle_bid"]) / df["straddle_mid"]
+    df["exit_spread"] = (exit_ask - df["exit_bid"]) / df["straddle_mid"]
+    return df
+
+def cost_table(sample: pd.DataFrame) -> pd.DataFrame:
+    rules = rule_pnl(sample)
+    spr = spreads(sample)
+
+    rows = []
+    for name, pnl in rules.items():
+        traded = sample.loc[pnl.index]
+        at_bidask = summarise(pnl)
+        at_mid = summarise(mid_pnl(traded, RULE_SIDES[name]))
+        rows.append({
+            "n": at_bidask["n"],
+            "pnl_bidask": at_bidask["mean"],
+            "t_bidask": at_bidask["t"],
+            "pnl_mid": at_mid["mean"],
+            "t_mid": at_mid["t"],
+            "cost": at_mid["mean"] - at_bidask["mean"],
+            "entry_spread": spr.loc[pnl.index, "entry_spread"].mean(),
+            "exit_spread": spr.loc[pnl.index, "exit_spread"].mean(),
+        })
+    return pd.DataFrame(rows, index=list(rules.keys()))
