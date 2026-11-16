@@ -4,7 +4,7 @@
 
 An event study of 44,085 S&P 500 earnings announcements (2004–2026), with at-the-money straddles priced from end-of-day option chains for 49 large-cap names (2010–2026). The trading question was tested with a kill criterion written and committed to git before any P&L was computed.
 
-**Result: no.** All three simple straddle rules lose money after bid/ask costs (mean −5.5% to −7.2% of the premium per trade, $t$ between −2.8 and −5.5). A one-feature linear model beats its benchmark out of sample, but only just ($R^2 = 0.0026$). The signal points the right way; the bid/ask spread is several times larger than the edge.
+**Result: no.** All three simple straddle rules lose money after bid/ask costs (mean −5.5% to −7.2% of the premium per trade, $t$ between −2.8 and −5.5). A one-feature linear model beats its benchmark out of sample, but only just ($R^2 = 0.0026$). The signal points the right way; the bid/ask spread is several times larger than the edge. Before costs, selling straddles that look rich against their own history earns +3.9% of the premium per trade ($t = 3.0$); crossing the spreads costs about 9%.
 
 ---
 
@@ -43,7 +43,15 @@ Kill test on pre-2024 events (n = 2,620; the 2024+ holdout was not touched). P&L
 
 **Why "options are overpriced" doesn't pay:** the median realised/implied ratio is 0.70, but a seller earns the *mean* of roughly $1 - \text{ratio}$, and a few huge moves dominate it. NVDA on 2023-05-24: options priced a 7.2% move, the stock moved 24.4%, and a straddle seller lost 248% of the premium overnight.
 
-Full numbers, caveats and follow-ups: [NOTES.md](NOTES.md).
+**Edge vs cost** (descriptive, after the result): P&L at mid against P&L at bid/ask.
+
+| Rule | At mid | t | Cost per trade | At bid/ask |
+|---|---|---|---|---|
+| Always sell | +2.5% | 2.13 | 9.2% | −6.7% |
+| Sell rich | +3.9% | 3.02 | 9.4% | −5.5% |
+| Buy cheap | +1.3% | 0.50 | 8.5% | −7.2% |
+
+Full numbers, caveats and follow-ups: [NOTES.md](NOTES.md). Every table is written to `reports/kill_test/` by `scripts/04_kill_test.py`.
 
 ## Documentation
 
@@ -61,7 +69,7 @@ scripts/
   01_manifest.py    inventory and integrity checks of every raw file
   02_clean.py       clean layer: prices, earnings calendar, IVX, option chains
   03_events.py      one row per earnings event: timing, moves, benchmark, straddles, target
-  04_kill_test.py   the pre-registered kill test and robustness table
+  04_kill_test.py   the pre-registered kill test, robustness and cost tables (CSV to reports/kill_test/)
 
 src/earning_vol/
   config.py         paths, dates (holdout from 2024-01-01), dataset names
@@ -69,7 +77,7 @@ src/earning_vol/
   manifest.py       raw-file inventory
   clean.py          cleaning rules
   events.py         event construction and ATM straddle pricing
-  strategy.py       kill-test sample, straddle P&L, rules, summary, linear model
+  strategy.py       kill-test sample, straddle P&L, rules, summary, linear model, cost diagnostics
 
 notebooks/          check scripts (.py): known-answer tests, regression checks, data-quality checks
 ```
@@ -106,4 +114,4 @@ uv run python scripts/04_kill_test.py
 
 ## Status
 
-Closed at the kill test (November 2026). Possible follow-ups (cost diagnostics, holding to expiry, a point-in-time universe) are listed in NOTES.md.
+Closed at the kill test (November 2026, tag `v1.0-kill-test`). Possible follow-ups (holding to expiry, a point-in-time universe, the fraction of the spread actually paid) are listed in NOTES.md.

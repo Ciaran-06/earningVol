@@ -121,7 +121,7 @@ $$M^{\text{imp}} = \frac{\text{straddle}_{\text{mid}}}{S}, \qquad \text{strike g
 | **Total (chain-company events)** | **4,233** |
 
 Of the 988 events with no entry-day chain, 982 are from 2004–2009, before chains were downloaded. Of the 3,239 `ok` events, 2,665 are before 2024 and 574 are in the holdout.
-- *Check:* NVDA 2023-05-24: $T$ = 2023-05-26, $K = 305$, $S = 305.38$, straddle 21.25 / 21.83 / 22.40, $M^{\text{imp}} = 0.0715$. Exit spot 379.80, exit straddle 73.96 / 74.67 / 75.37, close to the intrinsic value $|379.80 - 305| = 74.80$.
+- *Check:* NVDA 2023-05-24: $T$ = 2023-05-26, $K = 305$, $S = 305.38$, straddle 21.25 / 21.83 / 22.40, $M^{\text{imp}} = 0.0715$, days to expiry 1. Exit spot 379.80, exit straddle 73.96 / 74.67 / 75.37, close to the intrinsic value $|379.80 - 305| = 74.80$.
 - *Summary:* median $M^{\text{imp}}$ = 4.0%; median entry bid–ask spread = 6.6% of the straddle mid.
 
 **Limitations.**
@@ -170,3 +170,61 @@ where $C^{\text{unadj}}$ is the unadjusted entry-day close and $C^{\text{entry}}
 - `has_chains`: the company is one of the 49 chain names. This is a company-level label; whether a given event has a usable straddle is recorded by `straddle_status`.
 - `is_holdout`: report date on or after 2024-01-01 (6,110 events, 13.9%; 574 `ok` straddle events).
 - *Reason:* the holdout is fixed by date before any modelling and stays untouched until the final evaluation, so the final result is not tuned to it. A date split, rather than a random one, matches how a forecast would be used: trained on the past, applied to the future.
+
+## 8. Evaluation (Kill Test)
+
+The evaluation answers two questions: whether entry-day information predicts $y$ out of sample (H1), and whether a simple rule makes money on ATM straddles after bid/ask costs (H2). The sample, rules, pricing, statistics, pass criteria and robustness check were written in NOTES.md and committed to git (`985103f`) before any P&L was computed. Code: `src/earning_vol/strategy.py`; results: `scripts/04_kill_test.py`, which also writes every table to `reports/kill_test/`.
+
+**Step 1: Sample.** Pre-2024 events (`is_holdout` False) with an `ok` straddle and a defined benchmark B: 44,085 → 37,975 → 2,665 → **2,620** events, report dates 2010-01-14 to 2023-12-21.
+- *Reason:* the holdout stays untouched. Rules 2 and 3 need B, so every rule and the model use the same events and differences come from the rule, not the sample.
+
+**Step 2: Rules.** Each event is traded once, opened at the entry-day close and closed at the reaction-day close.
+1. Always sell the straddle.
+2. Sell if $M^{\text{imp}} > B$ (options rich relative to the last 8 moves).
+3. Buy if $M^{\text{imp}} < B$ (options cheap).
+
+An event with $M^{\text{imp}} = B$ exactly is traded by neither rule 2 nor rule 3 (none occurred).
+- *Reason:* the simplest rules that use the information in question. They are fixed in advance, so no rule is chosen after seeing results.
+
+**Step 3: P&L after costs.** Sellers sell at the bid and buy back at the ask; buyers do the reverse. P&L is a fraction of the entry mid:
+$$\text{P\&L}_{\text{sell}} = \frac{\text{straddle}_{\text{bid}} - \max\left(\text{exit}_{\text{ask}},\ |S_{\text{exit}} - K|\right)}{\text{straddle}_{\text{mid}}}, \qquad \text{P\&L}_{\text{buy}} = \frac{\text{exit}_{\text{bid}} - \text{straddle}_{\text{ask}}}{\text{straddle}_{\text{mid}}}$$
+- *Reason, bid and ask:* these are the prices a trader actually faces, so the full spread is paid on every round trip.
+- *Reason, dividing by the premium:* it makes events on a \$20 and a \$900 stock comparable, on the same scale as the move ratio.
+- *Reason, intrinsic floor:* a straddle cannot be bought for less than its intrinsic value, so an exit ask below it is a timing artefact or a bad quote. The floor only ever makes selling look worse (10 events, by a few cents).
+- *Check:* NVDA 2023-05-24: sell $= (21.25 - 75.37)/21.83 = -2.480$, buy $= (73.96 - 22.40)/21.83 = 2.362$.
+
+**Step 4: Summary statistics.** For each rule, over the events it trades only (untraded events are not counted as 0):
+$$\bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i, \qquad s = \sqrt{\frac{1}{n-1}\sum_{i=1}^{n}(x_i - \bar{x})^2}, \qquad t = \frac{\bar{x}}{s/\sqrt{n}}$$
+- *Reason:* $t$ measures how many standard errors the mean P&L is from zero. A rule passes only if its mean is positive with $t > 2$, i.e. unlikely to be luck under independence.
+- *Check:* $[1, 2, 3]$ gives $\bar{x} = 2$, $s = 1$, $t = 2\sqrt{3} \approx 3.464$.
+
+**Step 5: Linear model.** Ordinary least squares of $y$ on one feature,
+$$x = \log\left(\frac{B}{M^{\text{imp}}}\right), \qquad \hat y = a + b\,x,$$
+fitted on report dates 2010–2018 (1,663 events) and scored on 2019–2023 (957 events) with
+$$R^2 = 1 - \frac{\sum_{\text{test}} (y_i - \hat y_i)^2}{\sum_{\text{test}} (y_i - \bar y_{\text{train}})^2}.$$
+The benchmark $\hat y = 0$ ("the implied move is right on average") is reported alongside.
+- *Reason, the feature:* it is the information rules 2 and 3 use, so the model and the rules test the same idea. $b = 0$ means options already price it; $b = 1$ means the next move looks like the historical average.
+- *Reason, a date split:* the model is fitted on the past and scored on the future, as it would be used; a random split would let later events inform earlier ones.
+- *Reason, the training mean as benchmark:* it already captures the average variance risk premium, so a positive $R^2$ means the feature adds information beyond "options are usually overpriced". The training mean, not the test mean, is used, so the benchmark has no lookahead.
+- *Check:* scoring the training mean as the model gives $R^2 = 0$ exactly; the train and test counts sum to 2,620.
+
+**Step 6: Decision.** H1 passes if $R^2 > 0$ against the training mean. H2 passes if at least one rule has a positive mean with $t > 2$. The four combinations map to decisions written in advance (NOTES.md). `04_kill_test.py` applies the criterion in code.
+
+**Step 7: Robustness (pre-registered).** The three rules are rerun on events from 2013-01-01 (n = 2,098).
+- *Reason:* before weekly options the chosen expiry often ran well past the reaction day (median 23 days in 2010), inflating the implied move and flattering sellers (§4 limitations). From 2013, over 93% of events expire within a week.
+
+**Step 8: Cost decomposition (descriptive, after the result).** For each rule, P&L at mid and the two spreads, both as a fraction of the entry mid:
+$$\text{P\&L}^{\text{mid}}_{\text{sell}} = \frac{\text{straddle}_{\text{mid}} - \text{exit}_{\text{mid}}}{\text{straddle}_{\text{mid}}} = -\,\text{P\&L}^{\text{mid}}_{\text{buy}}$$
+$$\text{entry spread} = \frac{\text{straddle}_{\text{ask}} - \text{straddle}_{\text{bid}}}{\text{straddle}_{\text{mid}}}, \qquad \text{exit spread} = \frac{\max\left(\text{exit}_{\text{ask}},\ |S_{\text{exit}} - K|\right) - \text{exit}_{\text{bid}}}{\text{straddle}_{\text{mid}}}$$
+- *Reason:* it separates "there is no edge" from "costs eat the edge". It was specified after the kill-test result and cannot change the verdict.
+- *Check:* by construction, $\text{P\&L}_{\text{sell}} + \text{P\&L}_{\text{buy}} = -(\text{entry spread} + \text{exit spread})$ for every event; the largest error is $5 \times 10^{-16}$. NVDA 2023-05-24: entry spread 0.053, exit spread 0.065, mid sell −2.421.
+
+**Limitations.**
+- **Independence:** many reports fall in the same weeks, and a market-wide move hits many trades at once, so the $t$-statistics overstate confidence. A check clustered by reaction week was not run.
+- **Three rules:** the best of three passing $t > 2$ is easier than one pre-chosen rule passing. All three are reported.
+- **End-of-day quotes:** closing spreads may be wider than what could be traded intraday, so costs may be overstated.
+- **Selection bias:** the 49 chain names are today's large caps (§1), which biases against selling.
+- **H1 significance:** the out-of-sample $R^2$ was not tested against zero.
+- **The cost decomposition uses mid prices,** which nobody trades at. A positive $t$ at mid describes the edge; it is not a tradable result.
+
+Results: NOTES.md (*Kill Test Result* and *Follow-ups*) and `reports/kill_test/`.
